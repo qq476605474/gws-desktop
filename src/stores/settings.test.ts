@@ -62,11 +62,36 @@ describe("settings store 持久化", () => {
     expect(mocks.set).toHaveBeenCalledWith("theme", "macos");
   });
 
-  it("init 幂等：连续两次调用只 load 一次", async () => {
+  it("init 幂等：顺序两次调用只 load 一次", async () => {
     const store = useSettingsStore();
     await store.init();
     await store.init();
     expect(mocks.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("init 并发幂等：Promise.all 并发两次只 load 一次", async () => {
+    const store = useSettingsStore();
+    await Promise.all([store.init(), store.init()]);
+    expect(mocks.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("init 失败清缓存可重试：首次 rejects，再次调用重新 load 并成功", async () => {
+    mocks.load.mockRejectedValueOnce(new Error("load failed"));
+    const store = useSettingsStore();
+    await expect(store.init()).rejects.toThrow("load failed");
+    await store.init();
+    expect(mocks.load).toHaveBeenCalledTimes(2);
+    expect(store.theme).toBe("light");
+  });
+
+  it("init 加载阶段不写回：读取持久化值后 set 未被调用", async () => {
+    mocks.values.set("lastHub", "/a/b");
+    mocks.values.set("terminal", "Warp");
+    mocks.values.set("theme", "dark");
+    const store = useSettingsStore();
+    await store.init();
+    await flush();
+    expect(mocks.set).not.toHaveBeenCalled();
   });
 
   it("修改 lastHub → set(\"lastHub\", ...) 被调用", async () => {
