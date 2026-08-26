@@ -7,14 +7,16 @@ import EnvsTab from "../components/tabs/EnvsTab.vue";
 import DocsTab from "../components/tabs/DocsTab.vue";
 import OutputPanel from "../components/OutputPanel.vue";
 import AboutDialog from "../components/AboutDialog.vue";
+import SettingsDialog from "../components/SettingsDialog.vue";
 
 const tab = ref<"ws" | "repos" | "envs" | "docs">("ws");
 const showAbout = ref(false);
+const showSettings = ref(false);
 </script>
 
 <template>
   <div class="main">
-    <TopBar v-model:tab="tab" @open-about="showAbout = true" />
+    <TopBar v-model:tab="tab" @open-about="showAbout = true" @open-settings="showSettings = true" />
     <div class="body">
       <WorkspacesTab v-if="tab === 'ws'" />
       <ReposTab v-else-if="tab === 'repos'" />
@@ -23,6 +25,7 @@ const showAbout = ref(false);
     </div>
     <OutputPanel />
     <AboutDialog v-if="showAbout" @close="showAbout = false" />
+    <SettingsDialog v-if="showSettings" @close="showSettings = false" />
   </div>
 </template>
 
