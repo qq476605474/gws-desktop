@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { useHubStore } from "../stores/hub";
 import { useCmdStore } from "../stores/cmd";
 import { runGws } from "../lib/gws-bridge";
@@ -26,7 +27,14 @@ async function doCmd(label: string, args: string[], cwd: string = wsPath.value) 
   await refresh();
 }
 async function removeWs() {
-  if (!confirm(`确认删除工作区 ${props.name}？文档自动归档，未推送代码分支保留。`)) return;
+  // macOS WKWebView 下原生 window.confirm 恒返回 false，须用插件的原生对话框
+  let ok = false;
+  try {
+    ok = await confirm(`确认删除工作区 ${props.name}？文档自动归档，未推送代码分支保留。`);
+  } catch {
+    return; // 理论上不 reject；万一异常按取消处理，避免组件崩
+  }
+  if (!ok) return;
   const run = await cmd.exec(`gws rm ${props.name} --force`, ["rm", props.name, "--force"], hub.path);
   await cmd.waitDone(run);
   if (run.state === "done") emit("close");
@@ -55,7 +63,7 @@ onMounted(refresh);
       <button :disabled="cmd.isRunning()" @click="doCmd('gws sync-main', ['sync-main', '--yes'])">Sync-main</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws sync', ['sync'], hub.path)">Sync</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws done', ['done'])">Done 校验</button>
-      <button @click="showAdd = true">+ 模块</button>
+      <button :disabled="cmd.isRunning()" @click="showAdd = true">+ 模块</button>
       <button class="danger" :disabled="cmd.isRunning()" @click="removeWs">删除工作区</button>
     </div>
     <table v-if="st">
