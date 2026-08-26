@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { defineStore } from "pinia";
-import { reactive, ref } from "vue";
+import { reactive, ref, watch } from "vue";
 import { replayOutput, respondConfirm, runGwsStream } from "../lib/gws-bridge";
 
 export interface CmdRun {
@@ -63,5 +63,17 @@ export const useCmdStore = defineStore("cmd", () => {
     return current.value?.state === "running" || current.value?.state === "confirm";
   }
 
-  return { current, history, confirmPending, exec, answerConfirm, isRunning };
+  /** 等待 run 到终态（done/failed）。immediate 覆盖调用时已结束的情况。 */
+  function waitDone(run: CmdRun): Promise<CmdRun> {
+    return new Promise((resolve) => {
+      // WHY 可空声明：immediate 回调在 watch() 返回前同步执行（已终态场景），
+      // 彼时常量 stop 尚在 TDZ、调用即抛 ReferenceError，故先声明后安全调用
+      let stop: (() => void) | undefined;
+      stop = watch(() => run.state, (s) => {
+        if (s === "done" || s === "failed") { stop?.(); resolve(run); }
+      }, { immediate: true });
+    });
+  }
+
+  return { current, history, confirmPending, exec, answerConfirm, isRunning, waitDone };
 });

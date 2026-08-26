@@ -162,4 +162,24 @@ describe("cmd store 状态机", () => {
     expect(run2.state).toBe("running");
     expect(store.confirmPending).toBeNull();
   });
+
+  it("waitDone：exec 后立即调用，随后 exit 事件 → resolve 且 run 为终态", async () => {
+    const store = useCmdStore();
+    const run = await store.exec("gws run", ["run"], "/hub");
+    const pending = store.waitDone(run);
+    emit(`gws-exit:${RUN_ID}`, { code: 0 });
+    const settled = await pending;
+    expect(settled).toBe(run);
+    expect(settled.state).toBe("done");
+  });
+
+  it("waitDone：调用时已终态（exit 先行）→ 立即 resolve", async () => {
+    const store = useCmdStore();
+    const run = await store.exec("gws run", ["run"], "/hub");
+    emit(`gws-exit:${RUN_ID}`, { code: 1 });
+    // 无后续事件，仅靠 immediate 分支即须决议
+    const settled = await store.waitDone(run);
+    expect(settled).toBe(run);
+    expect(settled.state).toBe("failed");
+  });
 });
