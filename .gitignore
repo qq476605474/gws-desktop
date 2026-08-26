@@ -1,2 +1,6 @@
 .DS_Store
 .x-turbo/
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
