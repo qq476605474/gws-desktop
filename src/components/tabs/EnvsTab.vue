@@ -8,16 +8,22 @@ import PathActions from "../PathActions.vue";
 const hub = useHubStore();
 const cmd = useCmdStore();
 const newEnv = ref("");
+const submitting = ref(false);
 
 async function addEnv() {
-  if (!newEnv.value) return;
+  if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
+  const name = newEnv.value.trim(); // 纯空格输入视同空，避免把空白当分支名传给 gws
+  if (!name) return;
+  submitting.value = true;
   try {
-    const run = await cmd.exec(`gws env add ${newEnv.value}`, ["env", "add", newEnv.value], hub.path);
+    const run = await cmd.exec(`gws env add ${name}`, ["env", "add", name], hub.path);
     // exec 返回时命令仍在跑（事件流异步），须等终态再刷新，否则拿到的是旧列表
     await cmd.waitDone(run);
     if (run.state === "done") newEnv.value = ""; // 失败保留输入便于重试
   } catch {
     // exec reject（如 IPC 失败）：吞掉避免 unhandled rejection；数据未变，刷新无害
+  } finally {
+    submitting.value = false;
   }
   await hub.refreshAll();
 }
@@ -31,6 +37,7 @@ async function rmEnv(e: string) {
     return;
   }
   if (!ok) return;
+  if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令
   try {
     const run = await cmd.exec(`gws env rm ${e}`, ["env", "rm", e], hub.path);
     await cmd.waitDone(run);
@@ -41,11 +48,15 @@ async function rmEnv(e: string) {
 }
 
 async function sync() {
+  if (submitting.value) return; // 同 addEnv：防本地在途时重复提交
+  submitting.value = true;
   try {
     const run = await cmd.exec("gws sync", ["sync"], hub.path);
     await cmd.waitDone(run);
   } catch {
     // 同 addEnv：吞 reject，仍刷新
+  } finally {
+    submitting.value = false;
   }
   await hub.refreshAll();
 }
@@ -54,10 +65,11 @@ async function sync() {
 <template>
   <div>
     <div class="toolbar">
-      <input v-model="newEnv" placeholder="环境分支名（如 pre、dev1）" />
-      <button :disabled="!newEnv || cmd.isRunning()" @click="addEnv">+ 添加环境</button>
-      <button class="primary" :disabled="cmd.isRunning()" @click="sync">🔄 gws sync</button>
+      <input v-model="newEnv" :disabled="cmd.isRunning()" placeholder="环境分支名（如 pre、dev1）" />
+      <button :disabled="!newEnv.trim() || cmd.isRunning() || submitting" @click="addEnv">+ 添加环境</button>
+      <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">🔄 gws sync</button>
     </div>
+    <p v-if="hub.error" class="error">{{ hub.error }}</p>
     <div class="group-row">📁 envs <code>{{ hub.path }}/envs</code> <PathActions :path="`${hub.path}/envs`" /></div>
     <div v-for="e in hub.envs" :key="e" class="env-row">
       <div><strong>{{ e }}</strong> <span class="muted">模块数见 sync 输出</span></div>
@@ -66,6 +78,7 @@ async function sync() {
         <button :disabled="cmd.isRunning()" @click="rmEnv(e)">移除</button>
       </span>
     </div>
+    <p v-if="!hub.envs.length && !hub.error" class="muted">(暂无环境)</p>
   </div>
 </template>
 
@@ -75,5 +88,6 @@ async function sync() {
 .env-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; }
 .env-row > span { display: inline-flex; align-items: center; gap: 8px; }
 .muted { color: #888; font-size: 12px; }
+.error { color: #c62828; font-size: 13px; }
 .primary { background: #1565c0; color: #fff; }
 </style>

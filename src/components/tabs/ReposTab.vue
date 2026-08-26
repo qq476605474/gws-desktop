@@ -8,10 +8,13 @@ import PathActions from "../PathActions.vue";
 const hub = useHubStore();
 const cmd = useCmdStore();
 const input = ref("");
+const submitting = ref(false);
 
 async function addRepos() {
+  if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
   const urls = input.value.split(/\s+/).filter(Boolean);
   if (!urls.length) return;
+  submitting.value = true;
   try {
     const run = await cmd.exec("gws repo add", ["repo", "add", ...urls], hub.path);
     // exec 返回时命令仍在跑（事件流异步），须等终态再刷新，否则拿到的是旧列表
@@ -19,6 +22,8 @@ async function addRepos() {
     if (run.state === "done") input.value = ""; // 失败保留输入便于重试
   } catch {
     // exec reject（如 IPC 失败）：吞掉避免 unhandled rejection；数据未变，刷新无害
+  } finally {
+    submitting.value = false;
   }
   await hub.refreshAll();
 }
@@ -32,6 +37,7 @@ async function rm(name: string) {
     return;
   }
   if (!ok) return;
+  if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令
   try {
     const run = await cmd.exec(`gws repo rm ${name}`, ["repo", "rm", name], hub.path);
     await cmd.waitDone(run);
@@ -45,9 +51,10 @@ async function rm(name: string) {
 <template>
   <div>
     <div class="toolbar">
-      <input v-model="input" placeholder="git 地址（可多个，空格分隔）" style="flex:1" />
-      <button class="primary" :disabled="!input || cmd.isRunning()" @click="addRepos">+ 添加仓库</button>
+      <input v-model="input" :disabled="cmd.isRunning()" placeholder="git 地址（可多个，空格分隔）" style="flex:1" />
+      <button class="primary" :disabled="!input.trim() || cmd.isRunning() || submitting" @click="addRepos">+ 添加仓库</button>
     </div>
+    <p v-if="hub.error" class="error">{{ hub.error }}</p>
     <div class="group-row">📁 repos <code>{{ hub.path }}/repos</code> <PathActions :path="`${hub.path}/repos`" /></div>
     <div v-for="r in hub.repos" :key="r.name" class="repo-row">
       <div>
@@ -58,7 +65,8 @@ async function rm(name: string) {
         <button :disabled="cmd.isRunning()" @click="rm(r.name)">移除</button>
       </span>
     </div>
-    <p v-if="cmd.current?.label === 'gws repo add'" class="hint">添加后执行环境 Tab 的 gws sync 补建 worktree</p>
+    <p v-if="!hub.repos.length && !hub.error" class="muted">(暂无仓库)</p>
+    <p v-if="cmd.current?.label === 'gws repo add' && cmd.current.state !== 'failed'" class="hint">添加后执行环境 Tab 的 gws sync 补建 worktree</p>
   </div>
 </template>
 
@@ -69,5 +77,6 @@ async function rm(name: string) {
 .repo-row > span { display: inline-flex; align-items: center; gap: 8px; }
 .muted { color: #888; font-size: 12px; }
 .hint { color: #888; font-size: 13px; }
+.error { color: #c62828; font-size: 13px; }
 .primary { background: #1565c0; color: #fff; }
 </style>

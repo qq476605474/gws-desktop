@@ -130,6 +130,9 @@ describe("ReposTab", () => {
       "/hub",
     );
 
+    // 负向断言：exit 事件未发出、命令未到终态前不得提前 refreshAll（锁死 waitDone→refreshAll 时序）
+    expect(mocks.runGws).not.toHaveBeenCalled();
+
     await exitWith(1, 0);
     // 等终态后才 refreshAll（waitDone 模式）：三条 ls 均在命令结束后发起
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
@@ -178,6 +181,24 @@ describe("ReposTab", () => {
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["repo", "rm", "order-service"], "/hub"),
     );
+    await exitWith(1, 0);
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
+  });
+
+  it("addRepos：双击守卫——首击在途（submitting）时同步第二击不重复 exec", async () => {
+    mountTab();
+    setInput("https://git.example.com/a.git");
+    await nextTick();
+    // 同一任务里同步连点两次：Vue 未及重渲染禁用按钮，第二击只能靠 submitting 守卫拦截
+    clickButton("+ 添加仓库");
+    clickButton("+ 添加仓库");
+
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
+    expect(mocks.runGwsStream).toHaveBeenCalledWith(
+      ["repo", "add", "https://git.example.com/a.git"],
+      "/hub",
+    );
+
     await exitWith(1, 0);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
   });

@@ -124,6 +124,9 @@ describe("EnvsTab", () => {
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
     expect(mocks.runGwsStream).toHaveBeenCalledWith(["env", "add", "uat"], "/hub");
 
+    // 负向断言：exit 事件未发出、命令未到终态前不得提前 refreshAll（锁死 waitDone→refreshAll 时序）
+    expect(mocks.runGws).not.toHaveBeenCalled();
+
     await exitWith(1, 0);
     // 等终态后才 refreshAll（waitDone 模式）：三条 ls 均在命令结束后发起
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
@@ -139,6 +142,18 @@ describe("EnvsTab", () => {
     clickButton("+ 添加环境");
 
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
+    await nextTick();
+    expect(inputValue()).toBe("uat");
+  });
+
+  it("addEnv：命令失败（退出码 1）不清输入，仍刷新", async () => {
+    mountTab();
+    setInput("uat");
+    await nextTick();
+    clickButton("+ 添加环境");
+
+    await exitWith(1, 1); // env add 失败
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
     await nextTick();
     expect(inputValue()).toBe("uat");
   });
@@ -167,6 +182,30 @@ describe("EnvsTab", () => {
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["env", "rm", "dev"], "/hub"));
     // 取消分支未发命令，本次确认是本测试第一个 exec → runId 1
     await exitWith(1, 0);
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
+  });
+
+  it("rmEnv：confirm 确认时已有命令在跑（isRunning）→ 不 exec 不刷新", async () => {
+    mountTab();
+    // confirm 挂起：模拟原生对话框打开期间，用户已从另一入口（sync）启动命令
+    let resolveConfirm!: (v: boolean) => void;
+    mocks.confirm.mockImplementationOnce(
+      () => new Promise<boolean>((r) => { resolveConfirm = r; }),
+    );
+    clickButton("移除"); // 首行 dev；点击时无命令在跑，按钮可点
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("移除环境 dev？"));
+
+    clickButton("🔄 gws sync"); // 弹窗打开期间另一入口启动命令
+    // gws-exit:1 订阅就绪时 exec 已设置 current（state=running）→ isRunning() 为 true
+    await vi.waitFor(() => expect(mocks.handlers.get("gws-exit:1")).toBeTruthy());
+
+    resolveConfirm(true); // 用户点击“确认”
+    await new Promise((r) => setTimeout(r, 0)); // 冲微任务：rmEnv 应在 isRunning 守卫处直接返回
+    expect(mocks.runGwsStream).toHaveBeenCalledTimes(1); // 仅 sync，未发 env rm
+    expect(mocks.runGwsStream).toHaveBeenCalledWith(["sync"], "/hub");
+    expect(mocks.runGws).not.toHaveBeenCalled(); // rmEnv 被拦截，sync 未终态，均未触发刷新
+
+    await exitWith(1, 0); // sync 正常收尾后仍刷新
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
   });
 });
