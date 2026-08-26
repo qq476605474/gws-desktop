@@ -1,4 +1,5 @@
 pub mod gws_runner;
+pub mod shell;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -12,6 +13,10 @@ pub fn run() {
             gws_runner::run_gws_stream,
             gws_runner::respond_confirm,
             gws_runner::replay_output,
+            shell::open_in_finder,
+            shell::open_in_terminal,
+            shell::check_gws_installed,
+            shell::latest_gws_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
