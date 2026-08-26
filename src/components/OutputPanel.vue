@@ -20,5 +20,6 @@ const cmd = useCmdStore();
 header { padding: 4px 12px; font-size: 12px; color: var(--fg-muted); display: flex; justify-content: space-between; }
 /* pre 前景 #eee：终端面板恒深底（--bg-panel）恒浅字，三主题一致，无对应 CSS 变量 */
 pre { margin: 0; padding: 8px 12px; font-size: 12px; line-height: 1.5; overflow: auto; background: var(--bg-panel); color: #eee; flex: 1; }
-.state.running { color: var(--primary); } .state.done { color: var(--ok); } .state.failed { color: var(--danger); }
+/* 状态文字色用 -text 变体：macos 原值 #34c759/#ff3b30 作 12px 文字对比度不足（2.04/3.26），加深版过 AA */
+.state.running { color: var(--primary); } .state.done { color: var(--ok-text); } .state.failed { color: var(--danger-text); }
 </style>

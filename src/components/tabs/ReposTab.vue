@@ -77,6 +77,6 @@ async function rm(name: string) {
 .repo-row > span { display: inline-flex; align-items: center; gap: 8px; }
 .muted { color: var(--fg-muted); font-size: 12px; }
 .hint { color: var(--fg-muted); font-size: 13px; }
-.error { color: var(--danger); font-size: 13px; }
+.error { color: var(--danger-text); font-size: 13px; }
 .primary { background: var(--primary); color: var(--primary-fg); }
 </style>

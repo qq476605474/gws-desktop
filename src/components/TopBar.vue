@@ -37,5 +37,6 @@ function switchHub() {
 .brand { font-weight: 700; }
 .spacer { flex: 1; }
 nav { display: flex; gap: 4px; }
-.active { background: var(--mono-bg); }
+/* 显式 fg：不依赖 UA 按钮色（未设 color-scheme 时 dark 主题下黑字压深底仅 1.80:1） */
+.active { background: var(--mono-bg); color: var(--fg); }
 </style>

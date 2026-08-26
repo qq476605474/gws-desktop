@@ -130,10 +130,10 @@ onMounted(refresh);
 .ops { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; align-items: center; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
-.warn { color: var(--warn); font-weight: 600; }
-.error { color: var(--danger); font-size: 13px; margin: 0 0 12px; }
+.warn { color: var(--warn-text); font-weight: 600; }
+.error { color: var(--danger-text); font-size: 13px; margin: 0 0 12px; }
 .error button { margin-left: 6px; }
-.danger { color: var(--danger); }
+.danger { color: var(--danger-text); }
 small { color: var(--fg-muted); font-weight: 400; }
 .muted { color: var(--fg-muted); font-size: 13px; }
 </style>

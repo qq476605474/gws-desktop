@@ -92,11 +92,11 @@ function close() {
 </template>
 
 <style scoped>
-.mask { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.dialog { background: var(--bg-soft); border-radius: 8px; padding: 24px; width: 380px; }
+.mask { position: fixed; inset: 0; background: var(--mask); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.dialog { background: var(--bg-soft); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 24px; width: 380px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
-.error { color: var(--danger); font-size: 13px; }
-.ok { color: var(--ok); }
+.error { color: var(--danger-text); font-size: 13px; }
+.ok { color: var(--ok-text); }
 .muted { color: var(--fg-muted); font-size: 12px; }
 .primary { background: var(--primary); color: var(--primary-fg); }
 </style>

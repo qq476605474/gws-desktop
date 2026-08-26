@@ -32,8 +32,8 @@ const settings = useSettingsStore();
 </template>
 
 <style scoped>
-.mask { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.dialog { background: var(--bg-soft); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 24px; width: 420px; }
+.mask { position: fixed; inset: 0; background: var(--mask); display: flex; align-items: center; justify-content: center; z-index: 100; }
+.dialog { background: var(--bg-soft); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 24px; width: 420px; }
 label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 </style>
