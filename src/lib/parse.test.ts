@@ -79,6 +79,17 @@ describe("parseDocLs", () => {
       { file: "排期.md", synced: false, pageId: null },
     ]);
   });
+  it("文件名含空格的行仍被解析（file 保留空格，状态列不被吞进文件名）", () => {
+    const B = "\u001b[34m", G = "\u001b[32m";
+    const out =
+      B + "2026-08-18-checkout-revamp" + N + "\n" +
+      "  " + G + "●" + N + " my plan.md  " + D + "wiki:123" + N + "\n" +
+      "  " + D + "○" + N + " draft v2.md  " + D + "(未上传)" + N;
+    expect(parseDocLs(out)).toEqual([
+      { file: "my plan.md", synced: true, pageId: "123" },
+      { file: "draft v2.md", synced: false, pageId: null },
+    ]);
+  });
 });
 
 describe("parseVersion", () => {

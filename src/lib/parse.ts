@@ -93,8 +93,10 @@ export function parseDocLs(out: string): DocEntry[] {
   const lines = stripAnsi(out).split("\n");
   const res: DocEntry[] = [];
   for (const l of lines) {
-    // gws doc ls 行有 2 个前导空格（echo "  ● ..."），故锚点须容忍行首空白
-    const m = l.match(/^\s*[●○]\s+(\S+\.md)\s+(?:wiki:(\d+)|\(未上传\))?/);
+    // gws doc ls 行有 2 个前导空格（echo "  ● ..."），故锚点须容忍行首空白；
+    // 文件名可含空格（gws doc new 不禁止），而状态列前恒为 2+ 空格分隔——
+    // 用非贪婪 (.+?\.md) 跨空格取文件名，配 \s{2,} 保证状态列不被吞进文件名
+    const m = l.match(/^\s*[●○]\s+(.+?\.md)\s{2,}(?:wiki:(\d+)|\(未上传\))?/);
     if (m) res.push({ file: m[1], synced: l.includes("●"), pageId: m[2] ?? null });
   }
   return res;

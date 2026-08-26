@@ -176,6 +176,52 @@ describe("DocsTab.refresh", () => {
     expect(el!.textContent).not.toContain("工作区不存在"); // 错误只取尾行展示，首行不进任何位置
   });
 
+  it("切换工作区失败：表格工作区列与行内 push cwd 均指向数据归属的旧工作区（docsWs 快照）", async () => {
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // checkout-revamp 成功
+    mocks.runGws.mockResolvedValue({ code: 1, output: "gws: 工作区不存在" });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+
+    switchWs("login-crash"); // doc ls 失败：docsWs/docs/docDir 不动
+    await vi.waitFor(() => expect(el!.textContent).toContain("gws: 工作区不存在"));
+    // 旧文档表保持自洽：工作区列仍是数据归属的 checkout-revamp，而非切换目标 login-crash
+    expect(el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!.cells[1]!.textContent).toBe("checkout-revamp");
+
+    // 行内"上传"的 cwd 用 docsWs（旧工作区）——旧文件不会 push 到新工作区
+    clickButton("上传");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp"),
+    );
+    await exitWith(1, 0);
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(3)); // 挂载 + 切换 + 命令后刷新
+  });
+
+  it("doc ls 以 exit 0 返回 hub 级假列表（首行 docs）：哨兵拦截，err 提示、docs 保留旧值", async () => {
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() });
+    // gws 上游怪癖（实证：.workspace.json 缺 docs 键等）：首行 basename 退化为 "docs"
+    // + hub 级 README.md 行，exit 0——不设防会渲染成假表格
+    mocks.runGws.mockResolvedValue({ code: 0, output: B + "docs" + N + "\n  " + G + "●" + N + " README.md  " + D + "wiki:999" + N });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+
+    switchWs("login-crash");
+    await vi.waitFor(() => expect(el!.textContent).toContain("当前目录不是有效的工作区"));
+    expect(el!.querySelectorAll("tbody tr").length).toBe(2); // 假列表不进表格，旧数据保留
+    expect(el!.textContent).toContain("技术方案.md");
+    expect(el!.textContent).not.toContain("README.md");
+    // docDir 未被假值 "docs" 污染：路径列仍是旧 docdir
+    expect(el!.textContent).toContain("docs/2026-08-18-checkout-revamp/技术方案.md");
+    expect(el!.textContent).toContain("重试");
+  });
+
+  it("doc ls 失败输出的错误尾行剥 ANSI 后展示（不渲染转义序列）", async () => {
+    mocks.runGws.mockResolvedValue({ code: 1, output: D + "gws: 文档仓库不存在" + N + "\n" + D + "gws: 请先初始化" + N });
+    mountTab();
+
+    await vi.waitFor(() => expect(el!.textContent).toContain("gws: 请先初始化"));
+    expect(el!.textContent).not.toContain("\u001b");
+  });
+
   it("doc ls spawn 失败（code null）：错误信息直接展示", async () => {
     mocks.runGws.mockResolvedValue({ code: null, output: "启动失败: gws 未安装" });
     mountTab();
@@ -203,6 +249,31 @@ describe("DocsTab.refresh", () => {
     expect(el!.querySelector("table")).toBeNull();
     expect(el!.querySelector(".error")).toBeNull();
     expect(mocks.runGws).toHaveBeenCalledTimes(1); // ls 兜底后无目标，不发 doc ls
+  });
+
+  it("ls 兜底非零退出：安静降级为无工作区空态（不报错、不发 doc ls）", async () => {
+    mocks.runGws.mockResolvedValue({ code: 1, output: "gws: hub 结构损坏" });
+    mountTab([]);
+
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档——在当前工作区 gws doc new 创建）"));
+    expect(el!.querySelector(".error")).toBeNull(); // 不额外报错
+    expect(mocks.runGws).toHaveBeenCalledTimes(1);
+  });
+
+  it("首次加载在途显示「加载中…」而非「暂无文档」", async () => {
+    const pending: Array<{ resolve: (v: RunResult) => void }> = [];
+    mocks.runGws.mockImplementation(() => new Promise<RunResult>((resolve) => pending.push({ resolve })));
+    mountTab();
+
+    await nextTick();
+    expect(el!.textContent).not.toContain("暂无文档");
+    expect(el!.textContent).toContain("加载中…");
+    expect(el!.querySelector("table")).toBeNull();
+
+    pending[0]!.resolve({ code: 0, output: docLsOut() });
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    expect(el!.textContent).not.toContain("加载中…");
   });
 
   it("hub.workspaces 为空：ls 兜底解析工作区后正常 doc ls 第一个", async () => {
@@ -295,6 +366,22 @@ describe("DocsTab 命令操作", () => {
     expect(inputValue()).toBe("技术方案v2.md");
   });
 
+  it("create：文件名含内嵌空格直接拒绝——err 提示、不 exec、输入保留", async () => {
+    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
+    mocks.runGws.mockClear();
+
+    setInput("my plan.md");
+    await nextTick();
+    clickButton("+ 新建文档");
+    await new Promise((r) => setTimeout(r, 0));
+    expect(el!.textContent).toContain("文档名不能包含空格");
+    expect(mocks.runGwsStream).not.toHaveBeenCalled(); // 不发命令
+    expect(mocks.runGws).not.toHaveBeenCalled(); // 也不触发刷新
+    expect(inputValue()).toBe("my plan.md"); // 输入保留便于改名重试
+  });
+
   it("create：双击守卫——首击在途（submitting）时同步第二击不重复 exec", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
     mountTab();
@@ -327,13 +414,13 @@ describe("DocsTab 命令操作", () => {
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
   });
 
-  it("commit：doc commit 无文件参数，于当前工作区执行，结束后刷新", async () => {
+  it("commit：工具栏「commit 全部文档」无文件参数，于数据归属工作区执行，结束后刷新", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
     mountTab();
     await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
     mocks.runGws.mockClear();
 
-    clickButton("commit");
+    clickButton("commit 全部文档");
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "commit"], "/hub/ws/checkout-revamp"));
     expect(mocks.runGws).not.toHaveBeenCalled(); // 终态前不刷新
 
@@ -351,7 +438,7 @@ describe("DocsTab 命令操作", () => {
     await vi.waitFor(() => expect(mocks.handlers.get("gws-exit:1")).toBeTruthy());
     // 此时 isRunning()=true；happy-dom 的 click() 不受 disabled 限制，仍会派发事件——
     // commit 只能靠函数入口守卫拦截
-    clickButton("commit");
+    clickButton("commit 全部文档");
     await new Promise((r) => setTimeout(r, 0));
     expect(mocks.runGwsStream).toHaveBeenCalledTimes(1); // 仅 doc push
     expect(mocks.runGws).not.toHaveBeenCalled(); // commit 被拦截，push 未终态，均未触发刷新
