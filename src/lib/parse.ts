@@ -1,7 +1,19 @@
 import { stripAnsi } from "./ansi";
 
 export interface WsEntry { name: string; title: string; stage: string; modules: number; branch: string; }
-export interface StModule { name: string; dirty?: number; ahead?: number | null; behind?: number | null; pushed?: boolean; aheadOfMain?: number; missing?: boolean; }
+export interface StModule {
+  name: string;
+  dirty?: number;
+  /**
+   * ahead/behind 三态：缺省=missing 模块（目录缺失行）、null=未推送（远程状态未知）、数字=已知差值。
+   * aheadOfMain 缺省=无法计算（vs主干列显示 +?），数字=已知。
+   */
+  ahead?: number | null;
+  behind?: number | null;
+  pushed?: boolean;
+  aheadOfMain?: number;
+  missing?: boolean;
+}
 export interface StResult { title: string; branch: string; modules: StModule[]; }
 export interface RepoEntry { name: string; mainBranch: string; }
 export interface DocEntry { file: string; synced: boolean; pageId: string | null; }
@@ -67,7 +79,14 @@ export function parseRepoLs(out: string): RepoEntry[] {
 }
 
 export function parseEnvLs(out: string): string[] {
-  return stripAnsi(out).split("\n").map((l) => l.trim()).filter(Boolean);
+  const res: string[] = [];
+  for (const l of stripAnsi(out).split("\n")) {
+    // 跳过「环境分支」表头与空提示行，仅提取 ○/● 环境名
+    if (l.includes("环境分支") || l.includes("(暂无环境")) continue;
+    const m = l.match(/^\s*[○●]\s+(\S+)\s+\(/);
+    if (m) res.push(m[1]);
+  }
+  return res;
 }
 
 export function parseDocLs(out: string): DocEntry[] {
@@ -75,8 +94,8 @@ export function parseDocLs(out: string): DocEntry[] {
   const res: DocEntry[] = [];
   for (const l of lines) {
     // gws doc ls 行有 2 个前导空格（echo "  ● ..."），故锚点须容忍行首空白
-    const m = stripAnsi(l).match(/^\s*[●○]\s+(\S+\.md)\s+(?:wiki:(\d+)|\(未上传\))?/);
-    if (m) res.push({ file: m[1], synced: stripAnsi(l).includes("●"), pageId: m[2] ?? null });
+    const m = l.match(/^\s*[●○]\s+(\S+\.md)\s+(?:wiki:(\d+)|\(未上传\))?/);
+    if (m) res.push({ file: m[1], synced: l.includes("●"), pageId: m[2] ?? null });
   }
   return res;
 }
@@ -88,5 +107,5 @@ export function parseVersion(out: string): string {
 
 // gws doc ls 首行是 docdir 名（任务 12 文档 Tab 用）
 export function parseDocDir(out: string): string {
-  return stripAnsi(out.split("\n")[0] ?? "").trim();
+  return stripAnsi(out.split("\n")[0]).trim();
 }

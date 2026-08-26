@@ -55,8 +55,15 @@ describe("parseRepoLs", () => {
 });
 
 describe("parseEnvLs", () => {
-  it("每行一个环境", () => {
-    expect(parseEnvLs("dev\npre\n")).toEqual(["dev", "pre"]);
+  it("解析真实 env ls 输出（含表头与装饰）", () => {
+    const out =
+      "\u001b[34m环境分支\u001b[0m   \u001b[2m(即 envs/ 下的目录，gws env add/rm 增删)\u001b[0m\n" +
+      "  \u001b[2m○\u001b[0m dev  \u001b[2m(无模块，跑 gws sync)\u001b[0m\n" +
+      "  \u001b[32m●\u001b[0m pre  \u001b[2m(3 个模块)\u001b[0m\n";
+    expect(parseEnvLs(out)).toEqual(["dev", "pre"]);
+  });
+  it("空环境返回 []", () => {
+    expect(parseEnvLs("  \u001b[2m(暂无环境，用 gws env add dev pre 创建)\u001b[0m\n")).toEqual([]);
   });
 });
 
