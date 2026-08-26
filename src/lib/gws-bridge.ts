@@ -16,3 +16,8 @@ export function runGwsStream(args: string[], cwd: string): Promise<number> {
 export function respondConfirm(runId: number, yes: boolean): Promise<void> {
   return invoke("respond_confirm", { runId, yes });
 }
+
+/** 前端订阅事件完成后调用：后端回放订阅前缓存的事件并切换直发。 */
+export function replayOutput(runId: number): Promise<void> {
+  return invoke("replay_output", { runId });
+}

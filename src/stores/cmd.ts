@@ -1,7 +1,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { defineStore } from "pinia";
 import { reactive, ref } from "vue";
-import { runGwsStream, respondConfirm } from "../lib/gws-bridge";
+import { replayOutput, respondConfirm, runGwsStream } from "../lib/gws-bridge";
 
 export interface CmdRun {
   id: number;
@@ -39,6 +39,8 @@ export const useCmdStore = defineStore("cmd", () => {
       run.state = "confirm";
       confirmPending.value = { runId, question: e.payload.question };
     });
+    // 三个事件订阅完成 → 后端回放缓存事件并切换直发（否则订阅前的事件永远丢失）
+    await replayOutput(runId);
     return run;
   }
 

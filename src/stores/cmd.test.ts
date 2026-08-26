@@ -9,6 +9,7 @@ type Handler = (e: { payload: Payload }) => void;
 const mocks = vi.hoisted(() => ({
   runGwsStream: vi.fn<(args: string[], cwd: string) => Promise<number>>().mockResolvedValue(1),
   respondConfirm: vi.fn<(runId: number, yes: boolean) => Promise<void>>().mockResolvedValue(undefined),
+  replayOutput: vi.fn<(runId: number) => Promise<void>>().mockResolvedValue(undefined),
   /** 按事件名保存 listen 注册的 handler，测试中手动触发以模拟事件流 */
   handlers: new Map<string, Handler>(),
 }));
@@ -16,6 +17,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../lib/gws-bridge", () => ({
   runGwsStream: mocks.runGwsStream,
   respondConfirm: mocks.respondConfirm,
+  replayOutput: mocks.replayOutput,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -39,6 +41,7 @@ beforeEach(() => {
   mocks.handlers.clear();
   vi.clearAllMocks();
   mocks.runGwsStream.mockResolvedValue(RUN_ID);
+  mocks.replayOutput.mockResolvedValue(undefined);
 });
 
 describe("cmd store 状态机", () => {
@@ -46,6 +49,9 @@ describe("cmd store 状态机", () => {
     const store = useCmdStore();
     const run = await store.exec("gws ls", ["ls"], "/hub");
     expect(mocks.runGwsStream).toHaveBeenCalledWith(["ls"], "/hub");
+    // 订阅完成后必须通知后端回放缓存事件（先订阅后回放的契约）
+    expect(mocks.replayOutput).toHaveBeenCalledTimes(1);
+    expect(mocks.replayOutput).toHaveBeenCalledWith(RUN_ID);
     expect(run.state).toBe("running");
     expect(run.output).toBe("");
     expect(run.code).toBeNull();
