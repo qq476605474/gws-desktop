@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bash \"/Users/zengjiangfeng/.claude/skills/auto-updater.sh\" 2>/dev/null)",
+      "Bash(ls -la /Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli 2>/dev/null; echo \"---\"; which gws; echo \"---\"; gws version 2>/dev/null; echo \"---\"; wc -l ~/.local/bin/gws 2>/dev/null; ls /Users/zengjiangfeng/Desktop/gws-repo/)",
+      "Bash(gws --help 2>&1 | head -60)",
+      "Bash(grep -n \"usage\\\\|Usage\\\\|帮助\\\\|help\" ~/.local/bin/gws | head -20)",
+      "Bash(git -C /Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli add -A && git -C /Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli commit -qm \"docs: 自审修正——低频命令处理方式与 stdin 确认判定规则\" && git -C /Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli log --oneline)"
+    ]
+  }
+}

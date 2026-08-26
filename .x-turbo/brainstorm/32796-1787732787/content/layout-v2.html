@@ -1,0 +1,53 @@
+<h2>整体导航结构（修订版）</h2>
+<p class="subtitle">按你的思路重画：IDE 式启动流程 + 列表页/详情页两级导航。看是否符合预期。</p>
+
+<div class="mockup">
+  <div class="mockup-header">① 启动 — 选择 Hub（首次 / 换目录时出现）</div>
+  <div class="mockup-body">
+    <div style="padding:20px;text-align:center;">
+      <div style="border:1px solid #ddd;border-radius:8px;padding:14px;margin-bottom:10px;max-width:340px;margin-left:auto;margin-right:auto;background:#fafafa;">
+        <strong>选择 Hub 目录</strong>
+        <p style="font-size:11px;color:#666;margin:6px 0;">gws 通过 .gws-hub 标记识别 hub</p>
+        <div style="text-align:left;font-size:11px;">
+          <div style="padding:4px 6px;background:#e3f2fd;border-radius:4px;margin-bottom:3px;">🕘 ~/Documents/dev/myhub <small>（上次打开）</small></div>
+          <div style="padding:4px 6px;border:1px dashed #ccc;border-radius:4px;color:#666;">📂 浏览其他目录…</div>
+          <div style="padding:4px 6px;color:#666;">+ 新建 Hub（gws init）</div>
+        </div>
+      </div>
+      <p style="font-size:11px;color:#888;">默认直接进入上次的 hub，仅在其不存在时才显示此页。顶栏随时可切换。</p>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:14px;">
+  <div class="mockup-header">② 主界面 — 列表页 + 详情页</div>
+  <div class="mockup-body">
+    <div style="font-size:11px;">
+      <div class="mock-nav" style="padding:6px 10px;">
+        🏠 myhub <small>▾（点击切换 hub）</small> &nbsp;|&nbsp; 工作区 &nbsp; 仓库 &nbsp; 环境 &nbsp; 文档 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <button class="mock-button" style="padding:2px 8px;font-size:10px;">+ 新建需求</button> <button class="mock-button" style="padding:2px 8px;font-size:10px;">⇄ gws get</button>
+      </div>
+      <div style="padding:10px;">
+        <div style="border:1px solid #ddd;border-radius:6px;padding:6px 10px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;">
+          <span>📦 <strong>checkout-revamp</strong> <small style="color:#888;">结算流程改版 · 3 模块</small></span>
+          <span style="color:#e65100;font-size:10px;">order-service 有 3 处未提交</span>
+        </div>
+        <div style="border:1px solid #ddd;border-radius:6px;padding:6px 10px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;">
+          <span>📦 <strong>phase2</strong> <small style="color:#888;">阶段二 · 2 模块</small></span>
+          <span style="color:#2e7d32;font-size:10px;">全部干净 ↑2</span>
+        </div>
+        <p style="color:#888;font-size:11px;">点击任一工作区 → 进入详情页（模块表格 + Pull/Push/Merge 按钮 + 终端输出面板）</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:16px;">
+  <div class="option" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>符合预期</h3><p>启动选 hub（默认上次）+ 顶部 tab 导航 + 列表/详情两级</p></div>
+  </div>
+  <div class="option" data-choice="change" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>需要调整</h3><p>在终端告诉我哪里不对</p></div>
+  </div>
+</div>

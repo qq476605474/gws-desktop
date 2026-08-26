@@ -1,0 +1,89 @@
+<h2>仓库 / 环境 / 文档 Tab 长什么样</h2>
+<p class="subtitle">三个 tab 的线框图 + 终端偏好设置。点击选择或终端回复。</p>
+
+<div class="mockup">
+  <div class="mockup-header">Tab 1 — 仓库（gws repo add / ls / rm）</div>
+  <div class="mockup-body">
+    <div style="font-size:11px;padding:10px;">
+      <div style="margin-bottom:8px;">
+        <button class="mock-button" style="padding:2px 8px;font-size:10px;">+ 添加仓库</button>
+        <span style="color:#888;font-size:10px;margin-left:6px;">粘贴 git 地址，支持一次多个（空格分隔），内部执行 gws repo add … && 提示 sync</span>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:10px;">
+        <tr style="background:#f5f5f5;"><td style="padding:4px 6px;">仓库</td><td>当前分支</td><td>操作</td></tr>
+        <tr><td style="padding:4px 6px;">📦 order-service<br><small style="color:#999;">git@git.example.com:group/order-service.git</small></td><td>main</td><td><small>移除</small></td></tr>
+        <tr style="background:#fafafa;"><td style="padding:4px 6px;">📦 user-service<br><small style="color:#999;">git@git…/user-service.git</small></td><td>main</td><td><small>移除</small></td></tr>
+        <tr><td style="padding:4px 6px;">📦 admin-web</td><td>master</td><td><small>移除</small></td></tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:12px;">
+  <div class="mockup-header">Tab 2 — 环境（gws env add / ls / rm + gws sync）</div>
+  <div class="mockup-body">
+    <div style="font-size:11px;padding:10px;">
+      <div style="margin-bottom:8px;">
+        <button class="mock-button" style="padding:2px 8px;font-size:10px;">+ 添加环境</button>
+        <button class="mock-button" style="padding:2px 8px;font-size:10px;">🔄 gws sync</button>
+        <span style="color:#888;font-size:10px;margin-left:6px;">sync 是环境 tab 的核心动作：重置所有 envs 到远程</span>
+      </div>
+      <div style="border:1px solid #ddd;border-radius:6px;padding:6px 10px;margin-bottom:5px;display:flex;justify-content:space-between;align-items:center;">
+        <span><strong>dev</strong> <small style="color:#888;">12 个模块 · origin/dev 镜像</small></span>
+        <span><small>📂 访达 · 移除</small></span>
+      </div>
+      <div style="border:1px solid #ddd;border-radius:6px;padding:6px 10px;display:flex;justify-content:space-between;align-items:center;">
+        <span><strong>pre</strong> <small style="color:#888;">12 个模块</small></span>
+        <span><small>📂 访达 · 移除</small></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:12px;">
+  <div class="mockup-header">Tab 3 — 文档（汇总 hub 下所有需求文档，gws doc ls/push/commit）</div>
+  <div class="mockup-body">
+    <div style="font-size:11px;padding:10px;">
+      <div style="display:flex;gap:6px;margin-bottom:8px;">
+        <select class="mock-input" style="font-size:10px;padding:2px 4px;"><option>全部工作区</option><option>checkout-revamp</option></select>
+        <button class="mock-button" style="padding:2px 8px;font-size:10px;">+ 新建文档</button>
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:10px;">
+        <tr style="background:#f5f5f5;"><td style="padding:4px 6px;">文档</td><td>工作区</td><td>Confluence</td><td>操作</td></tr>
+        <tr><td style="padding:4px 6px;">📄 技术方案.md</td><td>checkout-revamp</td><td style="color:#2e7d32;">● 已同步</td><td><small>上传 · 访达</small></td></tr>
+        <tr style="background:#fafafa;"><td style="padding:4px 6px;">📄 排期.md</td><td>checkout-revamp</td><td style="color:#888;">○ 未上传</td><td><small>上传 · 访达</small></td></tr>
+        <tr><td style="padding:4px 6px;">📄 阶段二设计.md</td><td>phase2</td><td style="color:#888;">○ 未上传</td><td><small>上传 · 访达</small></td></tr>
+      </table>
+      <p style="color:#888;font-size:10px;margin-top:6px;">上传 = gws doc push（需配置 GWS_DOC_UPLOADER，未配置时按钮置灰并提示）</p>
+    </div>
+  </div>
+</div>
+
+<div class="mockup" style="margin-top:12px;">
+  <div class="mockup-header">设置 — 终端偏好（⌘, 打开）</div>
+  <div class="mockup-body">
+    <div style="font-size:11px;padding:10px;">
+      <div style="margin-bottom:6px;">
+        <span class="label">在终端中打开（Open in Terminal）</span><br>
+        <select class="mock-input" style="font-size:10px;padding:2px 4px;margin-top:4px;">
+          <option>跟随系统（检测到 iTerm2 用 iTerm2，否则 Terminal.app）</option>
+          <option>iTerm2</option>
+          <option>Terminal.app</option>
+          <option>Warp</option>
+        </select>
+      </div>
+      <p style="color:#888;font-size:10px;margin-top:6px;">默认「跟随系统」：检测到 iTerm2 已安装就走 iTerm2（AppleScript），否则回退 Terminal.app。设置里可强制指定。</p>
+    </div>
+  </div>
+</div>
+
+<div class="options" style="margin-top:16px;">
+  <div class="option" data-choice="ok" onclick="toggleSelect(this)">
+    <div class="letter">✓</div>
+    <div class="content"><h3>可以，整体定稿</h3><p>三个 tab + 终端偏好设置都确认</p></div>
+  </div>
+  <div class="option" data-choice="change" onclick="toggleSelect(this)">
+    <div class="letter">✎</div>
+    <div class="content"><h3>还要调整</h3><p>在终端告诉我调整点</p></div>
+  </div>
+</div>

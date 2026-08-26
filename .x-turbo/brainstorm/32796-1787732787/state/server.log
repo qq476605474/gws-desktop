@@ -1,0 +1,15 @@
+{"type":"server-started","port":52077,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:52077","screen_dir":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content","state_dir":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/state"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/tech-approach.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/waiting.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/waiting-2.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/waiting-3.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/waiting-4.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/layout.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/layout-v2.html"}
+{"source":"user-event","type":"click","text":"✓\n    符合预期启动选 hub（默认上次）+ 顶部 tab 导航 + 列表/详情两级","choice":"ok","id":null,"timestamp":1787733473442}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/layout-v3.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/layout-v4.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/tabs-design.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/path-actions.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/about-dialog.html"}
+{"type":"screen-added","file":"/Users/zengjiangfeng/Documents/dev/devspaces/ai/gws-cli/.x-turbo/brainstorm/32796-1787732787/content/waiting-5.html"}
