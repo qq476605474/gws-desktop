@@ -1,11 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { navigate } from "../router";
 import { useSettingsStore } from "../stores/settings";
 import { useHubStore } from "../stores/hub";
-import { hubExists } from "../lib/gws-bridge";
+import { checkGwsInstalled, hubExists } from "../lib/gws-bridge";
 
 const settings = useSettingsStore();
 const hub = useHubStore();
@@ -28,7 +27,7 @@ async function openHub() {
   navigate("main");
 }
 onMounted(async () => {
-  installed.value = await invoke<boolean>("check_gws_installed");
+  installed.value = await checkGwsInstalled();
   if (installed.value && settings.lastHub) {
     hubPath.value = settings.lastHub;
     await openHub(); // 上次 hub 存在且 gws 可用则直接进

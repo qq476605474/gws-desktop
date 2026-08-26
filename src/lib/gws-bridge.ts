@@ -26,3 +26,14 @@ export function replayOutput(runId: number): Promise<void> {
 export function hubExists(path: string): Promise<boolean> {
   return invoke<boolean>("hub_exists", { path });
 }
+
+export function openInFinder(path: string): Promise<void> {
+  return invoke("open_in_finder", { path });
+}
+/** terminal 传 null 表示跟随系统（Rust 侧自动检测 iTerm2/Terminal.app）。 */
+export function openInTerminal(path: string, terminal: string | null): Promise<void> {
+  return invoke("open_in_terminal", { path, terminal });
+}
+export function checkGwsInstalled(): Promise<boolean> {
+  return invoke<boolean>("check_gws_installed");
+}
