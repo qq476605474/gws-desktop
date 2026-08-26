@@ -11,6 +11,9 @@ export const useHubStore = defineStore("hub", () => {
 
   function setHub(p: string) {
     path.value = p;
+    workspaces.value = [];
+    repos.value = [];
+    envs.value = [];
   }
 
   async function refreshAll() {

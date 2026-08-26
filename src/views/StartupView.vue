@@ -29,9 +29,9 @@ async function openHub() {
 }
 onMounted(async () => {
   installed.value = await invoke<boolean>("check_gws_installed");
-  if (settings.lastHub) {
+  if (installed.value && settings.lastHub) {
     hubPath.value = settings.lastHub;
-    await openHub(); // 上次 hub 存在则直接进
+    await openHub(); // 上次 hub 存在且 gws 可用则直接进
   }
 });
 </script>
