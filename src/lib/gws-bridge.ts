@@ -39,3 +39,9 @@ export function openInTerminal(path: string, terminal: string | null): Promise<v
 export function checkGwsInstalled(): Promise<boolean> {
   return invoke<boolean>("check_gws_installed");
 }
+
+/** 查询 gws 远端最新版本（默认 GitHub raw 源，GWS_UPDATE_URL 环境变量可覆盖）。
+ * Rust 侧返回 Result<String,String>：网络失败/内容非 gws 脚本时 invoke reject（中文错误文案），不会 resolve null。 */
+export function latestGwsVersion(): Promise<string> {
+  return invoke<string>("latest_gws_version");
+}
