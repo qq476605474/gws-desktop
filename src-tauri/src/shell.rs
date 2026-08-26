@@ -192,6 +192,11 @@ pub fn check_gws_installed() -> bool {
     crate::gws_runner::find_gws().is_some()
 }
 
+#[tauri::command]
+pub fn hub_exists(path: String) -> bool {
+    Path::new(&path).join(".gws-hub").is_file()
+}
+
 /// (async)：curl 最长阻塞 60s，须在主线程外执行（sync fn + async 标记 → 线程池）。
 #[tauri::command(async)]
 pub fn latest_gws_version() -> Result<String, String> {

@@ -21,3 +21,8 @@ export function respondConfirm(runId: number, yes: boolean): Promise<void> {
 export function replayOutput(runId: number): Promise<void> {
   return invoke("replay_output", { runId });
 }
+
+/** 目录是否为 gws hub（.gws-hub 标记存在）。 */
+export function hubExists(path: string): Promise<boolean> {
+  return invoke<boolean>("hub_exists", { path });
+}
