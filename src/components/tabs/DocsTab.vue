@@ -171,9 +171,9 @@ onMounted(refresh);
 <style scoped>
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; }
-.muted { color: #888; font-size: 12px; }
-.error { color: #c62828; font-size: 13px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.muted { color: var(--fg-muted); font-size: 12px; }
+.error { color: var(--danger); font-size: 13px; }
 .error button { margin-left: 6px; }
-.primary { background: #1565c0; color: #fff; }
+.primary { background: var(--primary); color: var(--primary-fg); }
 </style>

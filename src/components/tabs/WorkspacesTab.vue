@@ -43,11 +43,11 @@ onMounted(() => hub.refreshAll());
 
 <style scoped>
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
-.ws-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; cursor: pointer; }
-.ws-row:hover { background: #fafafa; }
+.ws-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 6px; cursor: pointer; }
+.ws-row:hover { background: var(--bg-soft); }
 .ws-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.branch { background: #f0f0f0; padding: 1px 6px; border-radius: 3px; font-size: 12px; }
-.muted { color: #888; font-size: 12px; }
-.error { color: #c62828; font-size: 13px; }
-.primary { background: #1565c0; color: #fff; }
+.branch { background: var(--mono-bg); padding: 1px 6px; border-radius: 3px; font-size: 12px; }
+.muted { color: var(--fg-muted); font-size: 12px; }
+.error { color: var(--danger); font-size: 13px; }
+.primary { background: var(--primary); color: var(--primary-fg); }
 </style>

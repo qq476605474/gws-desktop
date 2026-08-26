@@ -63,10 +63,10 @@ async function add() {
 
 <style scoped>
 .mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.dialog { background: #fff; border-radius: 8px; padding: 20px; width: 380px; display: flex; flex-direction: column; gap: 8px; max-height: 80vh; overflow: auto; }
+.dialog { background: var(--bg-soft); border-radius: 8px; padding: 20px; width: 380px; display: flex; flex-direction: column; gap: 8px; max-height: 80vh; overflow: auto; }
 label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
-.primary { background: #1565c0; color: #fff; }
-.progress { color: #888; font-size: 13px; margin: 0; }
-.err { color: #c62828; font-size: 13px; margin: 0; }
+.primary { background: var(--primary); color: var(--primary-fg); }
+.progress { color: var(--fg-muted); font-size: 13px; margin: 0; }
+.err { color: var(--danger); font-size: 13px; margin: 0; }
 </style>

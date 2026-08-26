@@ -53,6 +53,6 @@ onMounted(async () => {
 
 <style scoped>
 .startup { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; gap: 16px; }
-.warn { color: #c62828; max-width: 480px; }
+.warn { color: var(--danger); max-width: 480px; }
 .pick { display: flex; gap: 8px; }
 </style>

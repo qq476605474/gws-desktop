@@ -57,10 +57,10 @@ async function pull() {
 
 <style scoped>
 .mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.dialog { background: #fff; border-radius: 8px; padding: 20px; width: 460px; display: flex; flex-direction: column; gap: 8px; }
+.dialog { background: var(--bg-soft); border-radius: 8px; padding: 20px; width: 460px; display: flex; flex-direction: column; gap: 8px; }
 label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 input { flex: 1; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
-.primary { background: #1565c0; color: #fff; }
-.err { color: #c62828; font-size: 13px; margin: 0; }
+.primary { background: var(--primary); color: var(--primary-fg); }
+.err { color: var(--danger); font-size: 13px; margin: 0; }
 </style>

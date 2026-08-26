@@ -93,10 +93,10 @@ function close() {
 
 <style scoped>
 .mask { position: fixed; inset: 0; background: rgba(0, 0, 0, .35); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.dialog { background: #fff; border-radius: 8px; padding: 24px; width: 380px; }
+.dialog { background: var(--bg-soft); border-radius: 8px; padding: 24px; width: 380px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
-.error { color: #c62828; font-size: 13px; }
-.ok { color: #2e7d32; }
-.muted { color: #888; font-size: 12px; }
-.primary { background: #1565c0; color: #fff; }
+.error { color: var(--danger); font-size: 13px; }
+.ok { color: var(--ok); }
+.muted { color: var(--fg-muted); font-size: 12px; }
+.primary { background: var(--primary); color: var(--primary-fg); }
 </style>

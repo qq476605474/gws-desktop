@@ -73,10 +73,10 @@ async function rm(name: string) {
 <style scoped>
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
 .group-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
-.repo-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid #e0e0e0; border-radius: 6px; padding: 8px 12px; margin-bottom: 6px; }
+.repo-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 6px; }
 .repo-row > span { display: inline-flex; align-items: center; gap: 8px; }
-.muted { color: #888; font-size: 12px; }
-.hint { color: #888; font-size: 13px; }
-.error { color: #c62828; font-size: 13px; }
-.primary { background: #1565c0; color: #fff; }
+.muted { color: var(--fg-muted); font-size: 12px; }
+.hint { color: var(--fg-muted); font-size: 13px; }
+.error { color: var(--danger); font-size: 13px; }
+.primary { background: var(--primary); color: var(--primary-fg); }
 </style>

@@ -16,8 +16,9 @@ const cmd = useCmdStore();
 </template>
 
 <style scoped>
-.panel { border-top: 1px solid #e0e0e0; max-height: 220px; display: flex; flex-direction: column; }
-header { padding: 4px 12px; font-size: 12px; color: #666; display: flex; justify-content: space-between; }
-pre { margin: 0; padding: 8px 12px; font-size: 12px; line-height: 1.5; overflow: auto; background: #1e1e1e; color: #eee; flex: 1; }
-.state.running { color: #1565c0; } .state.done { color: #2e7d32; } .state.failed { color: #c62828; }
+.panel { border-top: 1px solid var(--border); max-height: 220px; display: flex; flex-direction: column; }
+header { padding: 4px 12px; font-size: 12px; color: var(--fg-muted); display: flex; justify-content: space-between; }
+/* pre 前景 #eee：终端面板恒深底（--bg-panel）恒浅字，三主题一致，无对应 CSS 变量 */
+pre { margin: 0; padding: 8px 12px; font-size: 12px; line-height: 1.5; overflow: auto; background: var(--bg-panel); color: #eee; flex: 1; }
+.state.running { color: var(--primary); } .state.done { color: var(--ok); } .state.failed { color: var(--danger); }
 </style>

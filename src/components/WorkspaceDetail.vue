@@ -129,11 +129,11 @@ onMounted(refresh);
 .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .ops { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; align-items: center; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #eee; }
-.warn { color: #e65100; font-weight: 600; }
-.error { color: #c62828; font-size: 13px; margin: 0 0 12px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.warn { color: var(--warn); font-weight: 600; }
+.error { color: var(--danger); font-size: 13px; margin: 0 0 12px; }
 .error button { margin-left: 6px; }
-.danger { color: #c62828; }
-small { color: #888; font-weight: 400; }
-.muted { color: #888; font-size: 13px; }
+.danger { color: var(--danger); }
+small { color: var(--fg-muted); font-weight: 400; }
+.muted { color: var(--fg-muted); font-size: 13px; }
 </style>

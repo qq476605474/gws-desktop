@@ -22,5 +22,5 @@ async function terminal() {
 
 <style scoped>
 .pa { display: inline-flex; gap: 4px; }
-button { border: 1px solid #ddd; background: #fff; border-radius: 4px; cursor: pointer; }
+button { border: 1px solid var(--border); background: var(--bg-soft); border-radius: 4px; cursor: pointer; }
 </style>
