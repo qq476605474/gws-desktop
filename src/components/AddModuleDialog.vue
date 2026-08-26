@@ -16,6 +16,7 @@ async function add() {
   if (submitting.value) return;
   submitting.value = true;
   err.value = "";
+  const failed: string[] = [];
   try {
     const total = selected.value.length;
     for (let i = 0; i < total; i++) {
@@ -23,11 +24,21 @@ async function add() {
       progress.value = `正在添加 ${m}（${i + 1}/${total}）…`;
       const run = await cmd.exec(`gws add ${m}`, ["add", m], props.wsPath);
       await cmd.waitDone(run); // 逐个等结束，避免并发 worktree 操作
+      // 模块间独立：单个失败不中断循环，继续尝试后续模块
+      if (run.state !== "done") failed.push(m);
+    }
+    if (failed.length) {
+      // 部分失败：不 emit added、不关弹窗（列表刷新留给用户重试成功或手动取消后）；
+      // 从 selected 剔除已成功项，弹窗停留在失败项上，用户可直接重试
+      err.value = `部分模块添加失败：${failed.join("、")}（详见输出面板）`;
+      selected.value = failed;
+      return;
     }
     emit("added");
     emit("close");
   } catch (e) {
     err.value = String(e);
+  } finally {
     submitting.value = false;
   }
 }

@@ -33,7 +33,9 @@ onMounted(() => hub.refreshAll());
       <PathActions :path="`${hub.path}/ws/${ws.name}`" />
     </div>
     <p v-if="!hub.workspaces.length && !hub.error" class="muted">(暂无工作区)</p>
-    <WorkspaceDetail v-if="detail" :name="detail" @close="detail = null" />
+    <!-- :key 强制重挂载：name 变化时组件会被复用、onMounted 不重跑，表格将残留上一个工作区
+         的模块数据（行内“移除”会在错误工作区执行 gws drop） -->
+    <WorkspaceDetail v-if="detail" :key="detail" :name="detail" @close="detail = null" />
     <NewWorkspaceDialog v-if="showNew" @close="showNew = false" @created="hub.refreshAll()" />
     <GetWorkspaceDialog v-if="showGet" @close="showGet = false" @created="hub.refreshAll()" />
   </div>

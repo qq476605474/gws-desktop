@@ -63,15 +63,17 @@ export const useCmdStore = defineStore("cmd", () => {
     return current.value?.state === "running" || current.value?.state === "confirm";
   }
 
-  /** 等待 run 到终态（done/failed）。immediate 覆盖调用时已结束的情况。 */
+  /** 等待 run 到终态（done/failed）。已终态时前置短路同步 resolve。 */
   function waitDone(run: CmdRun): Promise<CmdRun> {
+    // WHY 前置短路：tauri exit 事件可能先于 exec promise 决议，调用方拿到 run 时
+    // 它可能已是终态——直接 resolve，不进 watcher。
+    if (run.state === "done" || run.state === "failed") return Promise.resolve(run);
+    // 走到这里 run 必为非终态，state 只会在事件回调里变更；无 immediate 的 watch
+    // 回调总是异步触发（pre-flush 队列），执行时 const stop 已完成赋值，无 TDZ 风险
     return new Promise((resolve) => {
-      // WHY 可空声明：immediate 回调在 watch() 返回前同步执行（已终态场景），
-      // 彼时常量 stop 尚在 TDZ、调用即抛 ReferenceError，故先声明后安全调用
-      let stop: (() => void) | undefined;
-      stop = watch(() => run.state, (s) => {
-        if (s === "done" || s === "failed") { stop?.(); resolve(run); }
-      }, { immediate: true });
+      const stop = watch(() => run.state, (s) => {
+        if (s === "done" || s === "failed") { stop(); resolve(run); }
+      });
     });
   }
 
