@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { ref } from "vue";
+import { reactive, ref } from "vue";
 import { runGwsStream, respondConfirm } from "../lib/gws-bridge";
 
 export interface CmdRun {
@@ -17,7 +17,9 @@ export const useCmdStore = defineStore("cmd", () => {
 
   async function exec(label: string, args: string[], cwd: string): Promise<CmdRun> {
     const runId = await runGwsStream(args, cwd);
-    const run: CmdRun = { id: runId, label, output: "", state: "running", code: null };
+    // reactive 包装：事件回调闭包持有 run 本身，若为普通对象，
+    // 回调里 run.output += ... 会绕过 ref 内部的代理而不触发 UI 更新。
+    const run: CmdRun = reactive({ id: runId, label, output: "", state: "running", code: null });
     current.value = run;
     const { listen } = await import("@tauri-apps/api/event");
     await listen<{ chunk: string }>(`gws-output:${runId}`, (e) => {
