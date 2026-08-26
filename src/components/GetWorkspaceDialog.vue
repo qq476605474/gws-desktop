@@ -9,21 +9,33 @@ const cmd = useCmdStore();
 const branch = ref("");
 const name = ref("");
 const title = ref("");
+const err = ref("");
+const submitting = ref(false);
 
 async function pull() {
+  if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
+  err.value = "";
   const args = ["get", branch.value];
   if (name.value) args.push("--name", name.value);
   if (title.value) args.push("--title", title.value);
-  const run = await cmd.exec(`gws get ${branch.value}`, args, hub.path);
-  emit("close");
-  // 同 NewWorkspaceDialog：等命令结束再通知刷新；瞬间结束的命令现值已是终态，须先查现值
-  if (run.state === "done" || run.state === "failed") {
-    emit("created");
-    return;
+  submitting.value = true;
+  try {
+    const run = await cmd.exec(`gws get ${branch.value}`, args, hub.path);
+    emit("close");
+    // 同 NewWorkspaceDialog：等命令结束再通知刷新；瞬间结束的命令现值已是终态，须先查现值
+    if (run.state === "done" || run.state === "failed") {
+      emit("created");
+      return;
+    }
+    const stop = watch(() => run.state, (s) => {
+      if (s === "done" || s === "failed") { stop(); emit("created"); }
+    });
+  } catch (e) {
+    // exec reject（如 IPC 失败）：写入内联提示，弹窗不关闭，让用户看到错误后手动取消
+    err.value = String(e);
+  } finally {
+    submitting.value = false;
   }
-  const stop = watch(() => run.state, (s) => {
-    if (s === "done" || s === "failed") { stop(); emit("created"); }
-  });
 }
 </script>
 
@@ -34,9 +46,10 @@ async function pull() {
       <label>远程 feature 分支 <input v-model="branch" placeholder="feature-20260818-checkout-revamp" /></label>
       <label>本地工作区名 <input v-model="name" placeholder="留空自动从分支名反推" /></label>
       <label>标题 <input v-model="title" placeholder="中文标题（可选）" /></label>
+      <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">
         <button @click="emit('close')">取消</button>
-        <button class="primary" :disabled="!branch || cmd.isRunning()" @click="pull">拉取</button>
+        <button class="primary" :disabled="!branch || submitting" @click="pull">拉取</button>
       </div>
     </div>
   </div>
@@ -49,4 +62,5 @@ label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 input { flex: 1; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .primary { background: #1565c0; color: #fff; }
+.err { color: #c62828; font-size: 13px; margin: 0; }
 </style>

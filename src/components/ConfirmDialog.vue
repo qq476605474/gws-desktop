@@ -17,7 +17,8 @@ const cmd = useCmdStore();
 </template>
 
 <style scoped>
-.mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 99; }
+/* 须永远盖在表单弹窗（z-index:100）之上：命令确认期间用户仍可打开表单弹窗 */
+.mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 200; }
 .dialog { background: #fff; border-radius: 8px; padding: 20px; max-width: 520px; }
 pre { white-space: pre-wrap; background: #fafafa; padding: 10px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }

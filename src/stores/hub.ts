@@ -26,8 +26,7 @@ export const useHubStore = defineStore("hub", () => {
         runGws(["repo", "ls"], path.value),
         runGws(["env", "ls"], path.value),
       ]);
-      // 仅 code===null（spawn 失败）算错误；非零退出码不算——
-      // gws env ls 有环境、gws ls 空 hub 时退出码均可能为 1
+      // 仅 code===null（spawn 失败）算错误；非零退出码不视为失败（env ls 有环境时退出码为 1 属正常）
       for (const out of [lsOut, repoOut, envOut]) {
         if (out.code === null) {
           error.value = out.output;

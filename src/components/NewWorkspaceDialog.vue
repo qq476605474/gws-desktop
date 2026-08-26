@@ -12,24 +12,36 @@ const title = ref("");
 const modules = ref<string[]>([]);
 const prefix = ref("feature");
 const customBranch = ref("");
+const err = ref("");
+const submitting = ref(false);
 
 async function create() {
+  if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
+  err.value = "";
   const args = ["new", name.value];
   if (modules.value.length) args.push("--modules", modules.value.join(","));
   if (title.value) args.push("--title", title.value);
   if (prefix.value !== "feature") args.push("--prefix", prefix.value);
   if (customBranch.value) args.push("--branch", customBranch.value);
-  const run = await cmd.exec(`gws new ${name.value}`, args, hub.path);
-  emit("close");
-  // 关闭弹窗但等命令结束后再通知刷新（watcher 在 await 后创建、不随组件卸载而停止，结束即自停）；
-  // 命令若瞬间结束，exit 事件可先于 exec 的 promise 决议送达，此时现值已是终态、watcher 不会再触发，须先查现值
-  if (run.state === "done" || run.state === "failed") {
-    emit("created");
-    return;
+  submitting.value = true;
+  try {
+    const run = await cmd.exec(`gws new ${name.value}`, args, hub.path);
+    emit("close");
+    // 关闭弹窗但等命令结束后再通知刷新（watcher 在 await 后创建、不随组件卸载而停止，结束即自停）；
+    // 命令若瞬间结束，exit 事件可先于 exec 的 promise 决议送达，此时现值已是终态、watcher 不会再触发，须先查现值
+    if (run.state === "done" || run.state === "failed") {
+      emit("created");
+      return;
+    }
+    const stop = watch(() => run.state, (s) => {
+      if (s === "done" || s === "failed") { stop(); emit("created"); }
+    });
+  } catch (e) {
+    // exec reject（如 IPC 失败）：写入内联提示，弹窗不关闭，让用户看到错误后手动取消
+    err.value = String(e);
+  } finally {
+    submitting.value = false;
   }
-  const stop = watch(() => run.state, (s) => {
-    if (s === "done" || s === "failed") { stop(); emit("created"); }
-  });
 }
 </script>
 
@@ -52,9 +64,10 @@ async function create() {
           <input type="checkbox" :value="r.name" v-model="modules" /> {{ r.name }}
         </label>
       </fieldset>
+      <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">
         <button @click="emit('close')">取消</button>
-        <button class="primary" :disabled="!name || cmd.isRunning()" @click="create">创建</button>
+        <button class="primary" :disabled="!name || submitting" @click="create">创建</button>
       </div>
     </div>
   </div>
@@ -68,4 +81,5 @@ input, select { flex: 1; }
 fieldset { max-height: 160px; overflow: auto; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .primary { background: #1565c0; color: #fff; }
+.err { color: #c62828; font-size: 13px; margin: 0; }
 </style>

@@ -27,6 +27,7 @@ export function hubExists(path: string): Promise<boolean> {
   return invoke<boolean>("hub_exists", { path });
 }
 
+/** 在系统文件管理器（macOS Finder 等）中打开指定目录。 */
 export function openInFinder(path: string): Promise<void> {
   return invoke("open_in_finder", { path });
 }
@@ -34,6 +35,7 @@ export function openInFinder(path: string): Promise<void> {
 export function openInTerminal(path: string, terminal: string | null): Promise<void> {
   return invoke("open_in_terminal", { path, terminal });
 }
+/** 检测 gws 是否已安装（PATH 中可找到可执行文件）。 */
 export function checkGwsInstalled(): Promise<boolean> {
   return invoke<boolean>("check_gws_installed");
 }
