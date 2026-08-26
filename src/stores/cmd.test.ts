@@ -116,6 +116,18 @@ describe("cmd store 状态机", () => {
     expect(mocks.respondConfirm).toHaveBeenCalledWith(RUN_ID, false);
   });
 
+  it("respondConfirm reject（run 已被后端清理）时 confirmPending 仍被清空", async () => {
+    const store = useCmdStore();
+    const run = await store.exec("gws run", ["run"], "/hub");
+    emit(`gws-confirm:${RUN_ID}`, { question: "确认发布？" });
+    mocks.respondConfirm.mockRejectedValueOnce(new Error("run 不存在"));
+    await expect(store.answerConfirm(false)).rejects.toThrow("run 不存在");
+    // finally 收尾：弹窗关闭（confirmPending 清空）+ 状态推进，不留僵尸确认
+    expect(store.confirmPending).toBeNull();
+    expect(run.state).toBe("failed");
+    expect(mocks.respondConfirm).toHaveBeenCalledWith(RUN_ID, false);
+  });
+
   it("僵尸 confirm：confirm 后进程自行退出 → confirmPending 被清空", async () => {
     const store = useCmdStore();
     const run = await store.exec("gws run", ["run"], "/hub");

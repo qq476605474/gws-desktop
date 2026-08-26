@@ -15,6 +15,10 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+[dev-dependencies]
+# mock runtime（tauri::test::mock_app）供集成测试验证线程编排与事件投递
+tauri = { version = "2", features = ["test"] }
+
 [lib]
 name = "gws_desk_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

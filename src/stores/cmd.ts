@@ -47,12 +47,16 @@ export const useCmdStore = defineStore("cmd", () => {
   async function answerConfirm(yes: boolean) {
     if (!confirmPending.value) return;
     const { runId } = confirmPending.value;
-    await respondConfirm(runId, yes);
-    // 仅当挂起确认属于当前 run 时才改其状态，防止陈旧 confirm 误伤新 run
-    if (current.value?.id === runId) {
-      current.value.state = yes ? "running" : "failed";
+    try {
+      await respondConfirm(runId, yes);
+    } finally {
+      // respondConfirm 抛错（如 run 已被后端清理）也要收尾，否则弹窗永远关不掉；
+      // 仅当挂起确认属于当前 run 时才改其状态，防止陈旧 confirm 误伤新 run
+      if (current.value?.id === runId) {
+        current.value.state = yes ? "running" : "failed";
+      }
+      confirmPending.value = null;
     }
-    confirmPending.value = null;
   }
 
   function isRunning(): boolean {

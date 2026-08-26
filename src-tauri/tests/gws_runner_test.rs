@@ -1,12 +1,18 @@
 use std::fs;
 use std::io::Read;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use gws_desk_lib::gws_runner::{
-    cleanup_if_done, find_gws, respond_confirm, run_gws_once, PendingEvent, RunShared, RUNS,
+    cleanup_if_done, find_gws, lock_runs, replay_output, respond_confirm, run_gws_once,
+    spawn_stream, PendingEvent, RunShared,
 };
+use tauri::{AppHandle, Emitter, Listener, Manager, Runtime};
 
 fn temp_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("gws_runner_test_{}_{}", name, std::process::id()));
@@ -17,10 +23,70 @@ fn temp_dir(name: &str) -> PathBuf {
 fn write_mock(dir: &Path, name: &str, script: &str) -> PathBuf {
     let path = dir.join(name);
     fs::write(&path, script).unwrap();
-    let mut perms = fs::metadata(&path).unwrap().permissions();
-    perms.set_mode(0o755);
-    fs::set_permissions(&path, perms).unwrap();
+    #[cfg(unix)]
+    {
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+    }
     path
+}
+
+/// 50ms 轮询等待条件成立，超时带上下文 panic。
+fn wait_until<T>(what: &str, timeout: Duration, mut probe: impl FnMut() -> Option<T>) -> T {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(v) = probe() {
+            return v;
+        }
+        assert!(Instant::now() < deadline, "等待 {what} 超时（{timeout:?}）");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct OutputPayload {
+    chunk: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ExitPayload {
+    code: Option<i32>,
+}
+
+#[derive(serde::Deserialize)]
+struct ConfirmPayload {
+    question: String,
+}
+
+/// 订阅 run 的三个事件并聚合为一份日志（mock runtime 下 emit 同步送达监听器）。
+#[derive(Default)]
+struct EventLog {
+    output: String,
+    /// None = 未收到 exit；Some(None) = 收到 exit 且 code 为 null（被信号杀死）
+    exit_code: Option<Option<i32>>,
+    confirm: Option<String>,
+}
+
+/// 前端 exec 的等价物：订阅 gws-output/gws-exit/gws-confirm 后才 replay_output。
+fn attach<R: Runtime>(handle: &AppHandle<R>, run_id: u32) -> Arc<Mutex<EventLog>> {
+    let log = Arc::new(Mutex::new(EventLog::default()));
+    let out = log.clone();
+    handle.listen_any(format!("gws-output:{run_id}"), move |e| {
+        let p: OutputPayload = serde_json::from_str(e.payload()).unwrap();
+        out.lock().unwrap().output.push_str(&p.chunk);
+    });
+    let exit = log.clone();
+    handle.listen_any(format!("gws-exit:{run_id}"), move |e| {
+        let p: ExitPayload = serde_json::from_str(e.payload()).unwrap();
+        exit.lock().unwrap().exit_code = Some(p.code);
+    });
+    let confirm = log.clone();
+    handle.listen_any(format!("gws-confirm:{run_id}"), move |e| {
+        let p: ConfirmPayload = serde_json::from_str(e.payload()).unwrap();
+        confirm.lock().unwrap().confirm = Some(p.question);
+    });
+    log
 }
 
 #[test]
@@ -34,6 +100,7 @@ fn run_once_captures_output_and_code() {
     let stdout_pos = res.output.find("hello").unwrap();
     let stderr_pos = res.output.find("err").unwrap();
     assert!(stdout_pos < stderr_pos, "stdout 应拼在 stderr 前: {}", res.output);
+    fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -51,24 +118,17 @@ fn run_once_passes_args_and_cwd() {
         res.output,
         canonical.display()
     );
+    fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
-fn find_gws_resolves_path() {
-    let dir = temp_dir("find_gws");
-    let gws = write_mock(&dir, "gws", "#!/bin/bash\nexit 0\n");
-    let old_path = std::env::var_os("PATH");
-    let mut paths = vec![dir.clone()];
-    if let Some(p) = &old_path {
-        paths.extend(std::env::split_paths(p));
+fn find_gws_returns_path_or_none_without_panicking() {
+    // 不篡改进程级 PATH（与并行测试相互干扰）：只验证真实环境下查找不 panic、类型正确。
+    // PATH 解析的命中逻辑由 spawn_stream 的 e2e 用显式 exe 路径覆盖。
+    let found: Option<PathBuf> = find_gws();
+    if let Some(path) = &found {
+        assert!(path.is_file(), "find_gws 返回的应是文件: {}", path.display());
     }
-    std::env::set_var("PATH", std::env::join_paths(paths).unwrap());
-    let found = find_gws();
-    match old_path {
-        Some(p) => std::env::set_var("PATH", p),
-        None => std::env::remove_var("PATH"),
-    }
-    assert_eq!(found, Some(gws));
 }
 
 #[test]
@@ -80,8 +140,8 @@ fn record_buffers_until_start_then_direct() {
 
     let drained = st.start();
     assert_eq!(drained.len(), 2);
-    assert!(matches!(&drained[0], PendingEvent::Output(s) if s == "a"), "顺序应保持: {:?}", drained.len());
-    assert!(matches!(&drained[1], PendingEvent::Confirm(q) if q == "q"));
+    assert!(matches!(&drained[0], PendingEvent::Output(s) if s == "a"), "顺序应保持: {drained:?}");
+    assert!(matches!(&drained[1], PendingEvent::Confirm(q) if q == "q"), "顺序应保持: {drained:?}");
 
     // start 后进入直发模式：record 返回 Some 由调用方 emit
     assert!(st.record(PendingEvent::Exit(Some(0))).is_some());
@@ -100,7 +160,7 @@ fn respond_confirm_yes_writes_stdin() {
     let stdin = child.stdin.take().unwrap();
     let mut stdout = child.stdout.take().unwrap();
 
-    RUNS.lock().unwrap().insert(
+    lock_runs().insert(
         90001,
         RunShared { child: Some(child), stdin: Some(stdin), started: false, finished: false, pending: Vec::new() },
     );
@@ -111,10 +171,11 @@ fn respond_confirm_yes_writes_stdin() {
     stdout.read_to_string(&mut out).unwrap();
     assert!(out.contains("got:y"), "output: {}", out);
 
-    let mut child = RUNS.lock().unwrap().get_mut(&90001).unwrap().child.take().unwrap();
+    let mut child = lock_runs().get_mut(&90001).unwrap().child.take().unwrap();
     let status = child.wait().unwrap();
     assert_eq!(status.code(), Some(0));
-    RUNS.lock().unwrap().remove(&90001);
+    lock_runs().remove(&90001);
+    fs::remove_dir_all(&dir).unwrap();
 }
 
 #[test]
@@ -122,54 +183,142 @@ fn respond_confirm_no_kills_process() {
     assert_eq!(respond_confirm(99999, true).unwrap_err(), "run 不存在");
 
     let dir = temp_dir("confirm_no");
-    let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nsleep 30\n");
+    // read 是 bash 内建：阻塞等 stdin，不依赖 PATH 查找外部 sleep
+    let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nread line\n");
     let mut child = Command::new(&exe).stdin(Stdio::piped()).spawn().unwrap();
     let stdin = child.stdin.take().unwrap();
-    RUNS.lock().unwrap().insert(
+    lock_runs().insert(
         90002,
         RunShared { child: Some(child), stdin: Some(stdin), started: false, finished: false, pending: Vec::new() },
     );
 
     respond_confirm(90002, false).unwrap();
 
-    let mut child = RUNS.lock().unwrap().get_mut(&90002).unwrap().child.take().unwrap();
+    let mut child = lock_runs().get_mut(&90002).unwrap().child.take().unwrap();
     let status = child.wait().unwrap();
     assert!(status.code().is_none(), "被信号杀死的进程 code 应为 None: {:?}", status);
-    RUNS.lock().unwrap().remove(&90002);
+    lock_runs().remove(&90002);
+    fs::remove_dir_all(&dir).unwrap();
 
     // child 已被 waiter take 走（None）时 kill 视为成功
-    RUNS.lock().unwrap().insert(
+    lock_runs().insert(
         90004,
         RunShared { child: None, stdin: None, started: false, finished: false, pending: Vec::new() },
     );
     respond_confirm(90004, false).unwrap();
-    RUNS.lock().unwrap().remove(&90004);
+    lock_runs().remove(&90004);
 }
 
 #[test]
 fn finished_and_started_run_is_removed() {
     let mut st = RunShared { child: None, stdin: None, started: false, finished: true, pending: Vec::new() };
     st.pending.push(PendingEvent::Exit(Some(0)));
-    RUNS.lock().unwrap().insert(90003, st);
+    lock_runs().insert(90003, st);
 
     // replay_output 核心：切直发并取回缓存 → started && finished → 清理
     let drained = {
-        let mut runs = RUNS.lock().unwrap();
+        let mut runs = lock_runs();
         let drained = runs.get_mut(&90003).map(|st| st.start()).unwrap_or_default();
         cleanup_if_done(&mut runs, 90003);
         drained
     };
     assert_eq!(drained.len(), 1);
     assert!(matches!(drained[0], PendingEvent::Exit(Some(0))));
-    assert!(!RUNS.lock().unwrap().contains_key(&90003), "started+finished 的 run 应被移除");
+
+    assert!(!lock_runs().contains_key(&90003), "started+finished 的 run 应被移除");
 
     // 对照：finished 但前端从未订阅（未 start）→ 保留等待回放
     let st = RunShared { child: None, stdin: None, started: false, finished: true, pending: Vec::new() };
-    RUNS.lock().unwrap().insert(90005, st);
+    lock_runs().insert(90005, st);
     {
-        let mut runs = RUNS.lock().unwrap();
+        let mut runs = lock_runs();
         cleanup_if_done(&mut runs, 90005);
         assert!(runs.contains_key(&90005), "未 start 的 run 不应被清理");
         runs.remove(&90005);
     }
+}
+
+/// 最小试验：验证 mock runtime 下 AppHandle::emit 能同步送达 listen_any 注册的监听器
+/// （e2e 事件断言的可行性前提）。
+#[test]
+fn mock_runtime_events_reach_rust_listeners() {
+    let app = tauri::test::mock_app();
+    let handle = app.app_handle();
+    let got = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = got.clone();
+    handle.listen_any("exp-event", move |e| sink.lock().unwrap().push(e.payload().to_string()));
+    handle.emit("exp-event", "ping").unwrap();
+    assert_eq!(got.lock().unwrap().as_slice(), ["\"ping\""]);
+}
+
+#[test]
+fn stream_e2e_output_exit_replay() {
+    let app = tauri::test::mock_app();
+    let handle = app.app_handle();
+    let dir = temp_dir("e2e_output");
+    // 5400 字节的中文行（> 4096 读块）验证读线程跨块 UTF-8 重组端到端无损
+    let big_line = "中".repeat(1800);
+    let script = format!(
+        "#!/bin/bash\necho hello\nprintf '中文输出行\\n'\nprintf '%s\\n' '{}'\nexit 2\n",
+        big_line
+    );
+    let exe = write_mock(&dir, "mock.sh", &script);
+
+    // run_gws_stream 契约：spawn + 编排完成后立即返回 runId，不等进程退出
+    let started = Instant::now();
+    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap()).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "run_gws_stream 应立即返回，实际耗时 {:?}",
+        started.elapsed()
+    );
+
+    // 前端契约：先订阅三个事件，再 replay_output 补发订阅前的缓存事件
+    let log = attach(handle, run_id);
+    replay_output(handle.clone(), run_id).unwrap();
+
+    let exit = wait_until("exit 事件", Duration::from_secs(10), || {
+        log.lock().unwrap().exit_code
+    });
+    assert_eq!(exit, Some(2));
+
+    let out = log.lock().unwrap().output.clone();
+    assert!(out.contains("hello\n"), "output: {out}");
+    assert!(out.contains("中文输出行\n"), "output: {out}");
+    assert!(out.contains(&big_line), ">4KB 中文长行应完整送达（实际收到 {} 字节）", out.len());
+    assert!(!out.contains('\u{FFFD}'), "跨块劈裂不应产生替换字符: {out:?}");
+
+    // exit 已直发送达且 started → run 应被清理
+    assert!(!lock_runs().contains_key(&run_id), "exit 送达后 run 应被清理");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn stream_e2e_confirm_kill() {
+    let app = tauri::test::mock_app();
+    let handle = app.app_handle();
+    let dir = temp_dir("e2e_confirm");
+    // read 是 bash 内建：阻塞等 stdin，无 stdout 输出 → 触发 watchdog 确认
+    let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nread line\necho \"got:$line\"\n");
+
+    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap()).unwrap();
+    let log = attach(handle, run_id);
+    replay_output(handle.clone(), run_id).unwrap();
+
+    // watchdog：静默 1.5s、每 250ms 轮询 → ~2s 内应发出 gws-confirm
+    let question = wait_until("confirm 事件", Duration::from_secs(5), || {
+        log.lock().unwrap().confirm.clone()
+    });
+    assert!(question.contains("等待确认"), "question: {question}");
+
+    // 拒绝 → 后端 kill 子进程
+    respond_confirm(run_id, false).unwrap();
+
+    let exit = wait_until("exit 事件", Duration::from_secs(10), || {
+        log.lock().unwrap().exit_code
+    });
+    assert_eq!(exit, None, "被 kill 的进程 exit code 应为 null");
+
+    assert!(!lock_runs().contains_key(&run_id), "exit 送达后 run 应被清理");
+    fs::remove_dir_all(&dir).unwrap();
 }

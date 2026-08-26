@@ -6,7 +6,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Runtime};
 
 const GWS_INSTALL_HINT: &str = "gws 未安装。安装: curl -fsSL https://raw.githubusercontent.com/qq476605474/gws/main/gws -o ~/.local/bin/gws && chmod +x ~/.local/bin/gws";
 
@@ -34,7 +34,7 @@ struct ExitPayload {
     code: Option<i32>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum PendingEvent {
     Output(String),
     Confirm(String),
@@ -96,9 +96,14 @@ static RUN_ID: AtomicU32 = AtomicU32::new(1);
 pub static RUNS: LazyLock<Mutex<HashMap<u32, RunShared>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn lock_runs() -> MutexGuard<'static, HashMap<u32, RunShared>> {
-    // 某个后台线程 panic 中毒后继续取数据：单个 run 的异常不应拖垮全局事件流
-    RUNS.lock().unwrap_or_else(|e| e.into_inner())
+/// 取锁并从中毒状态恢复：某个后台线程 panic 不应拖垮全局事件流。
+/// lock_runs 与 StreamMeta 内部锁统一使用此策略。
+fn lock_ignoring_poison<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+pub fn lock_runs() -> MutexGuard<'static, HashMap<u32, RunShared>> {
+    lock_ignoring_poison(&RUNS)
 }
 
 /// 流式 run 的跨线程元数据：
@@ -117,28 +122,28 @@ impl StreamMeta {
     }
 
     fn touch(&self) {
-        *self.last_output.lock().unwrap() = Instant::now();
+        *lock_ignoring_poison(&self.last_output) = Instant::now();
     }
 
     fn silent_for(&self) -> Duration {
-        self.last_output.lock().unwrap().elapsed()
+        lock_ignoring_poison(&self.last_output).elapsed()
     }
 
     fn reader_done(&self) {
-        *self.readers.lock().unwrap() -= 1;
+        *lock_ignoring_poison(&self.readers) -= 1;
         self.readers_done.notify_all();
     }
 
     /// 不持 RUNS 锁等待：若持锁等待会阻塞 respond_confirm 等所有命令（死锁）。
     fn wait_readers_done(&self) {
-        let mut n = self.readers.lock().unwrap();
+        let mut n = lock_ignoring_poison(&self.readers);
         while *n > 0 {
-            n = self.readers_done.wait(n).unwrap();
+            n = self.readers_done.wait(n).unwrap_or_else(|e| e.into_inner());
         }
     }
 }
 
-fn emit_event(app: &AppHandle, run_id: u32, ev: &PendingEvent) {
+fn emit_event<R: Runtime>(app: &AppHandle<R>, run_id: u32, ev: &PendingEvent) {
     let name = ev.event_name(run_id);
     let _ = match ev {
         PendingEvent::Output(chunk) => app.emit(&name, OutputPayload { chunk: chunk.as_str() }),
@@ -147,16 +152,70 @@ fn emit_event(app: &AppHandle, run_id: u32, ev: &PendingEvent) {
     };
 }
 
-/// 读者/watchdog/waiter 共用的事件入口。
-/// 持锁 emit：跨线程事件按 record 顺序送达，且回放与直发不会交错；
-/// emit 只向事件循环投递消息，无阻塞 IO，持锁安全。
-fn push_event(app: &AppHandle, run_id: u32, ev: PendingEvent) {
-    let mut runs = lock_runs();
+/// 已持 RUNS 锁的事件入口（push_event 的无锁内核）。
+/// waiter/watchdog 用它把「检查 run 状态 + 记录事件」组合进同一次临界区，
+/// 保证 Confirm 不可能越过 Exit 之后入队（竞态原子化）。
+fn push_event_locked<R: Runtime>(
+    runs: &mut HashMap<u32, RunShared>,
+    app: &AppHandle<R>,
+    run_id: u32,
+    ev: PendingEvent,
+) {
     if let Some(st) = runs.get_mut(&run_id) {
         if let Some(ev) = st.record(ev) {
             emit_event(app, run_id, &ev);
         }
     }
+}
+
+/// 读者线程的事件入口。
+/// 持锁 emit：跨线程事件按 record 顺序送达，且回放与直发不会交错；
+/// emit 只向事件循环投递消息，无阻塞 IO，持锁安全。
+fn push_event<R: Runtime>(app: &AppHandle<R>, run_id: u32, ev: PendingEvent) {
+    let mut runs = lock_runs();
+    push_event_locked(&mut runs, app, run_id, ev);
+}
+
+/// 追加 buf 到 carry，返回可安全解码的前缀；尾部不完整的多字节序列留在 carry 等下一块；
+/// 确定无效的字节序列替换为 U+FFFD 逐字节消费（保证收敛）。
+/// 管道 read 按任意字节边界返回块，对每块独立 from_utf8_lossy 会把跨块边界的
+/// 多字节字符（如中文）劈成 U+FFFD —— 突发 >4KB 输出时中文必然乱码。
+fn take_complete_utf8(carry: &mut Vec<u8>, buf: &[u8]) -> String {
+    carry.extend_from_slice(buf);
+    let mut out = String::new();
+    loop {
+        match std::str::from_utf8(carry) {
+            Ok(s) => {
+                out.push_str(s);
+                carry.clear();
+                return out;
+            }
+            Err(e) => {
+                let valid = e.valid_up_to();
+                // from_utf8 报错时 [0, valid) 必为合法 UTF-8
+                out.push_str(std::str::from_utf8(&carry[..valid]).unwrap());
+                match e.error_len() {
+                    // 确定无效：该字节替换为 U+FFFD 并消费它，继续解码后续字节
+                    Some(_) => {
+                        out.push('\u{FFFD}');
+                        carry.drain(..valid + 1);
+                    }
+                    // 尾部不完整的多字节序列：留在 carry 等下一块补全
+                    None => {
+                        carry.drain(..valid);
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// EOF 冲刷：残留的不完整序列已无后续字节可补全，按 lossy 语义收尾。
+fn flush_carry(carry: &mut Vec<u8>) -> String {
+    let rest = String::from_utf8_lossy(carry).into_owned();
+    carry.clear();
+    rest
 }
 
 /// 同步一次性执行，stdout 在前、stderr 追加换行后拼接。
@@ -191,12 +250,30 @@ pub fn run_gws(args: Vec<String>, cwd: String) -> Result<RunResult, String> {
     Ok(run_gws_once(&exe, &args, Path::new(&cwd)))
 }
 
+/// 泛型 Runtime：生产走 Wry，集成测试可用 mock runtime 的 AppHandle 直调。
 #[tauri::command]
-pub fn run_gws_stream(app: AppHandle, args: Vec<String>, cwd: String) -> Result<u32, String> {
+pub fn run_gws_stream<R: Runtime>(
+    app: AppHandle<R>,
+    args: Vec<String>,
+    cwd: String,
+) -> Result<u32, String> {
     let exe = find_gws().ok_or_else(|| GWS_INSTALL_HINT.to_string())?;
-    let mut child = Command::new(&exe)
-        .args(&args)
-        .current_dir(&cwd)
+    spawn_stream(&app, &exe, &args, &cwd)
+}
+
+/// spawn + 事件编排。与命令入口拆开：集成测试直接传 mock 可执行文件路径，
+/// 不必篡改进程级 PATH（会与并行测试相互干扰）。
+pub fn spawn_stream<R: Runtime>(
+    app: &AppHandle<R>,
+    exe: &Path,
+    args: &[String],
+    cwd: &str,
+) -> Result<u32, String> {
+    // 各后台线程要求 'static：入口处克隆出所有权句柄（exe/cwd 是函数体内消费掉的借用）
+    let app = app.clone();
+    let mut child = Command::new(exe)
+        .args(args)
+        .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -214,21 +291,28 @@ pub fn run_gws_stream(app: AppHandle, args: Vec<String>, cwd: String) -> Result<
 
     let meta = Arc::new(StreamMeta::new((stdout.is_some() as u32) + (stderr.is_some() as u32)));
 
-    // stderr 读线程：不重置 last_output（静默判据只看 stdout）
+    // stderr 读线程：不重置 last_output（静默判据只看 stdout）。
+    // carry 跨 read 块重组 UTF-8，块边界劈裂的多字节字符（中文）不产生 U+FFFD。
     if let Some(mut pipe) = stderr {
         let app = app.clone();
         let meta = meta.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            let mut carry: Vec<u8> = Vec::new();
             loop {
                 match pipe.read(&mut buf) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => push_event(
-                        &app,
-                        run_id,
-                        PendingEvent::Output(String::from_utf8_lossy(&buf[..n]).to_string()),
-                    ),
+                    Ok(n) => {
+                        let chunk = take_complete_utf8(&mut carry, &buf[..n]);
+                        if !chunk.is_empty() {
+                            push_event(&app, run_id, PendingEvent::Output(chunk));
+                        }
+                    }
                 }
+            }
+            let rest = flush_carry(&mut carry);
+            if !rest.is_empty() {
+                push_event(&app, run_id, PendingEvent::Output(rest));
             }
             meta.reader_done();
         });
@@ -239,29 +323,35 @@ pub fn run_gws_stream(app: AppHandle, args: Vec<String>, cwd: String) -> Result<
         let meta = meta.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
+            let mut carry: Vec<u8> = Vec::new();
             loop {
                 match pipe.read(&mut buf) {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
                         meta.touch();
-                        push_event(
-                            &app,
-                            run_id,
-                            PendingEvent::Output(String::from_utf8_lossy(&buf[..n]).to_string()),
-                        );
+                        let chunk = take_complete_utf8(&mut carry, &buf[..n]);
+                        if !chunk.is_empty() {
+                            push_event(&app, run_id, PendingEvent::Output(chunk));
+                        }
                     }
                 }
+            }
+            let rest = flush_carry(&mut carry);
+            if !rest.is_empty() {
+                push_event(&app, run_id, PendingEvent::Output(rest));
             }
             meta.reader_done();
         });
     }
 
     // watchdog：子进程 1.5s 无 stdout 输出且未退出 → 猜测在等 stdin 确认，
-    // 每次运行至多发一次 gws-confirm 事件
+    // 每次运行至多发一次 gws-confirm 事件。
+    // 「确认未结束 + 记录 Confirm」在单次加锁内完成：否则 waiter 可能在
+    // 检查与记录之间置 finished，Confirm 落到 Exit 之后（乱序或误发）。
     {
         let app = app.clone();
         let meta = meta.clone();
-        let cwd = cwd.clone();
+        let cwd = cwd.to_string();
         std::thread::spawn(move || loop {
             std::thread::sleep(WATCHDOG_INTERVAL);
             let over = {
@@ -274,26 +364,31 @@ pub fn run_gws_stream(app: AppHandle, args: Vec<String>, cwd: String) -> Result<
             if over {
                 return;
             }
-            if meta.silent_for() >= CONFIRM_SILENCE {
-                push_event(
-                    &app,
-                    run_id,
-                    PendingEvent::Confirm(format!("gws 在 {cwd} 等待确认（1.5s 无输出）。确认继续？")),
-                );
-                return;
+            if meta.silent_for() < CONFIRM_SILENCE {
+                continue;
             }
+            // 单次加锁：确认未结束才记录 Confirm（与 waiter 的 Exit 临界区互斥）
+            let mut runs = lock_runs();
+            if runs.get(&run_id).is_some_and(|st| !st.finished) {
+                let question = format!("gws 在 {cwd} 等待确认（1.5s 无输出）。确认继续？");
+                push_event_locked(&mut runs, &app, run_id, PendingEvent::Confirm(question));
+            }
+            return;
         });
     }
 
     // waiter：先等读者排空管道（此刻进程必已退出），再 take 出 Child wait——
     // take 早于 wait 是为了 wait 期间不持 RUNS 锁；而 Child 保留在 RUNS 到此刻，
     // 是为了 respond_confirm(no) 能 kill 尚在运行的进程。
+    // 「记录 Exit + 置 finished + 清理判断」在单次加锁内完成（原子化）：
+    // watchdog 的 Confirm 检查与之互斥，不可能再插到 Exit 之后。
     std::thread::spawn(move || {
         meta.wait_readers_done();
         let child = lock_runs().get_mut(&run_id).and_then(|st| st.child.take());
         let code = child.and_then(|mut c| c.wait().ok()).and_then(|s| s.code());
-        push_event(&app, run_id, PendingEvent::Exit(code));
+        // 单次加锁：记录 Exit + 置 finished + 清理判断原子完成
         let mut runs = lock_runs();
+        push_event_locked(&mut runs, &app, run_id, PendingEvent::Exit(code));
         if let Some(st) = runs.get_mut(&run_id) {
             st.finished = true;
         }
@@ -303,8 +398,9 @@ pub fn run_gws_stream(app: AppHandle, args: Vec<String>, cwd: String) -> Result<
     Ok(run_id)
 }
 
+/// 泛型 Runtime：生产走 Wry，集成测试可用 mock runtime 的 AppHandle 直调。
 #[tauri::command]
-pub fn replay_output(app: AppHandle, run_id: u32) -> Result<(), String> {
+pub fn replay_output<R: Runtime>(app: AppHandle<R>, run_id: u32) -> Result<(), String> {
     let mut runs = lock_runs();
     // run 不存在 = 事件已全部直发送达或早已清理，幂等成功
     let drained = runs.get_mut(&run_id).map(|st| st.start()).unwrap_or_default();
@@ -337,4 +433,106 @@ pub fn respond_confirm(run_id: u32, yes: bool) -> Result<(), String> {
         let _ = stdin.flush();
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ascii_passes_through_in_small_chunks() {
+        // 两个小块拼成同一句：ASCII 无多字节序列，全部直通
+        let mut carry = Vec::new();
+        assert_eq!(take_complete_utf8(&mut carry, b"hel"), "hel");
+        assert_eq!(take_complete_utf8(&mut carry, b"lo world"), "lo world");
+        assert!(carry.is_empty(), "ASCII 不应残留 carry");
+    }
+
+    #[test]
+    fn cjk_char_split_1_plus_2_and_2_plus_1() {
+        let bytes = "中".as_bytes(); // 3 字节
+        let mut carry = Vec::new();
+        assert_eq!(take_complete_utf8(&mut carry, &bytes[..1]), "");
+        assert_eq!(carry.len(), 1, "劈开的后 2 字节应留在 carry");
+        assert_eq!(take_complete_utf8(&mut carry, &bytes[1..]), "中");
+        assert!(carry.is_empty());
+
+        let mut carry = Vec::new();
+        assert_eq!(take_complete_utf8(&mut carry, &bytes[..2]), "");
+        assert_eq!(carry.len(), 2, "劈开的后 1 字节应留在 carry");
+        assert_eq!(take_complete_utf8(&mut carry, &bytes[2..]), "中");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn consecutive_cjk_split_across_chunks() {
+        // 三个「中」按 1/1/4/3 字节切块：连续字符在多块间反复劈裂仍能无损重组
+        let bytes = "中中中".as_bytes();
+        let mut carry = Vec::new();
+        assert_eq!(take_complete_utf8(&mut carry, &bytes[..1]), "");
+        assert_eq!(take_complete_utf8(&mut carry, &bytes[1..2]), "");
+        assert_eq!(take_complete_utf8(&mut carry, &bytes[2..6]), "中中");
+        assert_eq!(take_complete_utf8(&mut carry, &bytes[6..]), "中");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn invalid_byte_becomes_replacement_and_keeps_going() {
+        // 确定无效的 0xFF → U+FFFD，且不卡死：后续有效内容继续正常解码
+        let mut carry = Vec::new();
+        assert_eq!(take_complete_utf8(&mut carry, b"a\xFFb"), "a\u{FFFD}b");
+        assert!(carry.is_empty(), "无效字节应被逐个消费");
+        assert_eq!(take_complete_utf8(&mut carry, "中".as_bytes()), "中");
+    }
+
+    #[test]
+    fn invalid_byte_between_cjk_chars() {
+        let mut carry = Vec::new();
+        let mut input = "中".as_bytes().to_vec();
+        input.push(0xFF);
+        input.extend_from_slice("文".as_bytes());
+        assert_eq!(take_complete_utf8(&mut carry, &input), "中\u{FFFD}文");
+        assert!(carry.is_empty());
+    }
+
+    #[test]
+    fn eof_flush_emits_replacement_for_residual() {
+        // EOF 时 carry 里只剩劈裂的半个「中」：按 lossy 冲刷为一个 U+FFFD
+        let mut carry = Vec::new();
+        assert_eq!(take_complete_utf8(&mut carry, &"中".as_bytes()[..2]), "");
+        assert_eq!(flush_carry(&mut carry), "\u{FFFD}");
+        assert!(carry.is_empty());
+        // EOF 时无残留则冲刷出空串
+        assert_eq!(flush_carry(&mut carry), "");
+    }
+
+    #[test]
+    fn split_at_every_offset_roundtrips() {
+        // 在每个字节边界劈一次：两块 + EOF 冲刷后必须无损还原
+        let s = "a中文b\u{1F600}c"; // 混合 ASCII、3 字节中文、4 字节 emoji
+        let bytes = s.as_bytes();
+        for k in 0..=bytes.len() {
+            let mut carry = Vec::new();
+            let first = take_complete_utf8(&mut carry, &bytes[..k]);
+            let second = take_complete_utf8(&mut carry, &bytes[k..]);
+            let rest = flush_carry(&mut carry);
+            assert_eq!(format!("{first}{second}{rest}"), s, "劈裂点 k={k}");
+        }
+    }
+
+    #[test]
+    fn six_thousand_cjk_across_4k_chunks_no_replacement() {
+        // 复现路径：单次写 6000 个「中」（18000 字节）被 4096 字节读块切开，
+        // 旧实现每块独立 lossy 会产生 U+FFFD；carry 重组后应无损
+        let s = "中".repeat(6000);
+        let bytes = s.as_bytes();
+        let mut carry = Vec::new();
+        let mut out = String::new();
+        for chunk in bytes.chunks(4096) {
+            out.push_str(&take_complete_utf8(&mut carry, chunk));
+        }
+        out.push_str(&flush_carry(&mut carry));
+        assert_eq!(out, s);
+        assert!(!out.contains('\u{FFFD}'), "不应出现替换字符");
+    }
 }
