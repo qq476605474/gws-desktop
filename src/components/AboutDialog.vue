@@ -35,6 +35,9 @@ async function loadCurrent() {
 onMounted(loadCurrent);
 
 async function check() {
+  // 入口守卫：镜像 update——disabled 已防真实用户，此处防程序化双击（同步第二击落在
+  // patch 滞后窗口内仍会派发）导致 checking 状态错乱
+  if (checking.value || updating.value || cmd.isRunning()) return;
   checking.value = true;
   try {
     // Rust 侧 Result<String,String>：远端不可达/内容无效时 reject（走 catch），不会 resolve null
@@ -52,7 +55,11 @@ async function update() {
   try {
     const run = await cmd.exec("gws update", ["update"], hub.path);
     await cmd.waitDone(run); // exec 返回时 update 尚未跑完——等终态再查版本，否则拿到旧版本号
+    // 非零退出上报（对照 AddModuleDialog 检查 state !== "done"）：loadCurrent 入口清 err，
+    // 失败提示须设在其后，否则被静默抹掉
+    const failed = run.state !== "done";
     await loadCurrent();
+    if (failed) err.value = "gws update 未成功（详见输出面板）";
   } catch (e) {
     err.value = String(e);
   } finally {
