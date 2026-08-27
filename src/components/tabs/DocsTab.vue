@@ -156,7 +156,7 @@ onMounted(refresh);
           <td>{{ d.synced ? `● 已同步 (wiki:${d.pageId})` : "○ 未上传" }}</td>
           <td><code>docs/{{ docDir }}/{{ d.file }}</code> <PathActions :path="`${hub.path}/docs/${docDir}/${d.file}`" /></td>
           <td>
-            <button :disabled="cmd.isRunning()" @click="push(d.file)">上传</button>
+            <button class="btn-sm" :disabled="cmd.isRunning()" @click="push(d.file)">上传</button>
           </td>
         </tr>
       </tbody>
@@ -175,5 +175,4 @@ th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--bor
 .muted { color: var(--fg-muted); font-size: 12px; }
 .error { color: var(--danger-text); font-size: 13px; }
 .error button { margin-left: 6px; }
-.primary { background: var(--primary); color: var(--primary-fg); }
 </style>

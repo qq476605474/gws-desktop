@@ -1,0 +1,45 @@
+/* 全局基础样式：控件尺寸体系（验收#7）与页面滚动约束（验收#3 残留）。
+   采用元素级定义：此前按钮/输入框尺寸与外观全靠各组件 scoped 样式（或 UA 默认），
+   十余处重复且大小不一；统一到元素级后组件只保留变体差异，新组件自动获得一致外观 */
+
+/* 页面级不滚动：视口高度锁死、溢出隐藏，滚动只发生在内部叶子容器（列表区、弹窗输出区）。
+   同时清掉 UA body margin——否则 100vh 主容器 + 8px 外边距会把页面撑出滚动条 */
+html, body { margin: 0; height: 100%; overflow: hidden; }
+#app { height: 100%; }
+
+button, input, select {
+  box-sizing: border-box;
+  font: inherit;
+  font-size: var(--control-fs);
+  min-height: var(--control-h);
+  padding: 0 var(--control-pad-x);
+  border-radius: var(--radius);
+}
+
+button {
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  color: var(--fg);
+  cursor: pointer;
+}
+
+/* 变体类全局化：.primary/.danger 此前在约 10 个组件里逐份复制 */
+.primary { background: var(--primary); color: var(--primary-fg); }
+.danger { color: var(--danger-text); }
+
+/* 行内小按钮：路径图标操作、表格行内动作——空间受限但仍保证可点击面积 */
+.btn-sm { min-height: var(--control-h-sm); padding: 0 10px; }
+
+input[type="checkbox"] {
+  min-height: 0;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  accent-color: var(--primary);
+}
+
+button:disabled, input:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
+button:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}

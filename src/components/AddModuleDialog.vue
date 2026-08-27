@@ -67,10 +67,10 @@ async function add() {
 
 <style scoped>
 .mask { position: fixed; inset: 0; background: var(--mask); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.dialog { background: var(--bg-soft); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 20px; width: 380px; display: flex; flex-direction: column; gap: 8px; max-height: 80vh; overflow: auto; }
+/* overscroll contain：模块多时整卡滚动，防滚动链穿透到背后页面 */
+.dialog { background: var(--bg-soft); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 20px; width: 380px; display: flex; flex-direction: column; gap: 8px; max-height: 80vh; overflow: auto; overscroll-behavior: contain; }
 label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
-.primary { background: var(--primary); color: var(--primary-fg); }
 .progress { color: var(--fg-muted); font-size: 13px; margin: 0; }
 .err { color: var(--danger-text); font-size: 13px; margin: 0; }
 </style>

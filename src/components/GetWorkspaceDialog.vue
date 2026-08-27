@@ -57,6 +57,5 @@ async function pull() {
 label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 input { flex: 1; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
-.primary { background: var(--primary); color: var(--primary-fg); }
 .err { color: var(--danger-text); font-size: 13px; margin: 0; }
 </style>

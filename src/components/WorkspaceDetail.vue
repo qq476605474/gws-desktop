@@ -143,7 +143,7 @@ onMounted(refresh);
           <td>{{ m.pushed === false ? "未推送" : `↑${m.ahead ?? 0} ↓${m.behind ?? 0}` }}</td>
           <td>+{{ m.aheadOfMain ?? "?" }}</td>
           <!-- gws drop 是 GUI 下唯一真读 stdin 的命令：保持默认 1.5s 确认超时（其余命令 30s 防假确认） -->
-          <td><button :disabled="cmd.isRunning()" @click="doCmd(`gws drop ${m.name}`, ['drop', m.name], { confirmTimeoutMs: 1500 })">移除</button></td>
+          <td><button class="btn-sm" :disabled="cmd.isRunning()" @click="doCmd(`gws drop ${m.name}`, ['drop', m.name], { confirmTimeoutMs: 1500 })">移除</button></td>
         </tr>
       </tbody>
     </table>
@@ -162,7 +162,6 @@ th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--bor
 .warn { color: var(--warn-text); font-weight: 600; }
 .error { color: var(--danger-text); font-size: 13px; margin: 0 0 12px; }
 .error button { margin-left: 6px; }
-.danger { color: var(--danger-text); }
 small { color: var(--fg-muted); font-weight: 400; }
 .muted { color: var(--fg-muted); font-size: 13px; }
 </style>

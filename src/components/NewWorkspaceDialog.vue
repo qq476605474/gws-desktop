@@ -75,9 +75,10 @@ async function create() {
 .mask { position: fixed; inset: 0; background: var(--mask); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .dialog { background: var(--bg-soft); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 20px; width: 460px; display: flex; flex-direction: column; gap: 8px; }
 label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-input, select { flex: 1; }
-fieldset { max-height: 160px; overflow: auto; }
+/* 排除 checkbox：flex:1 会把模块勾选框横向拉满整行（配合 base.css 的 checkbox 定尺寸） */
+input:not([type="checkbox"]), select { flex: 1; }
+/* 滚动叶子区：contain 防模块列表滚到底后滚动链穿透 */
+fieldset { max-height: 160px; overflow: auto; overscroll-behavior: contain; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
-.primary { background: var(--primary); color: var(--primary-fg); }
 .err { color: var(--danger-text); font-size: 13px; margin: 0; }
 </style>

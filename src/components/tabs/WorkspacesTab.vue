@@ -51,5 +51,4 @@ onMounted(() => hub.refreshAll());
 .branch { background: var(--mono-bg); padding: 1px 6px; border-radius: 3px; font-size: 12px; }
 .muted { color: var(--fg-muted); font-size: 12px; }
 .error { color: var(--danger-text); font-size: 13px; }
-.primary { background: var(--primary); color: var(--primary-fg); }
 </style>

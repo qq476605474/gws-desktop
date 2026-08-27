@@ -78,5 +78,4 @@ async function rm(name: string) {
 .muted { color: var(--fg-muted); font-size: 12px; }
 .hint { color: var(--fg-muted); font-size: 13px; }
 .error { color: var(--danger-text); font-size: 13px; }
-.primary { background: var(--primary); color: var(--primary-fg); }
 </style>

@@ -22,5 +22,4 @@ const cmd = useCmdStore();
 .dialog { background: var(--bg-soft); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 20px; max-width: 520px; }
 pre { white-space: pre-wrap; background: var(--mono-bg); padding: 10px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
-.danger { color: var(--danger-text); } .primary { background: var(--primary); color: var(--primary-fg); }
 </style>

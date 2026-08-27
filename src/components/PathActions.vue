@@ -14,13 +14,12 @@ async function terminal() {
 
 <template>
   <span class="pa" @click.stop>
-    <button title="复制路径" @click="copy">📋</button>
-    <button title="在访达中打开" @click="finder">📂</button>
-    <button title="在终端中打开" @click="terminal">💻</button>
+    <button class="btn-sm" title="复制路径" @click="copy">📋</button>
+    <button class="btn-sm" title="在访达中打开" @click="finder">📂</button>
+    <button class="btn-sm" title="在终端中打开" @click="terminal">💻</button>
   </span>
 </template>
 
 <style scoped>
 .pa { display: inline-flex; gap: 4px; }
-button { border: 1px solid var(--border); background: var(--bg-soft); border-radius: 4px; cursor: pointer; }
 </style>

@@ -28,6 +28,7 @@ const showSettings = ref(false);
 </template>
 
 <style scoped>
-.main { display: flex; flex-direction: column; height: 100vh; }
-.body { flex: 1; overflow: auto; padding: 12px 16px; }
+.main { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+/* 唯一的页面级滚动容器：contain 防滚到底后滚动链穿透带动外层（html/body 已锁死不滚） */
+.body { flex: 1; overflow: auto; overscroll-behavior: contain; padding: 12px 16px; }
 </style>

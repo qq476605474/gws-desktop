@@ -9,6 +9,11 @@
   --mono-bg: #f5f5f5;
   --radius: 6px; --shadow: 0 8px 24px rgba(0,0,0,.16);
   --mask: rgba(0,0,0,.35);
+  /* 控件尺寸体系（验收#7）：三主题取值一致，统一在此管理；dark/macos 不覆盖即沿用 :root */
+  --control-h: 32px;      /* 按钮/输入/选择标准高 */
+  --control-h-sm: 28px;   /* 行内小按钮（路径图标、表格行内操作） */
+  --control-fs: 13px;     /* 控件字号 */
+  --control-pad-x: 14px;  /* 控件水平内边距 */
 }
 [data-theme="dark"] {
   color-scheme: dark;

@@ -58,6 +58,4 @@ header { display: flex; justify-content: space-between; align-items: center; gap
 /* pre 前景 #eee：终端输出恒深底（--bg-panel）恒浅字，三主题一致，无对应 CSS 变量（沿用 OutputPanel） */
 pre { margin: 0; padding: 10px 16px; font-size: 12px; line-height: 1.5; overflow-y: auto; overscroll-behavior: contain; background: var(--bg-panel); color: #eee; flex: 1; min-height: 0; }
 footer { display: flex; justify-content: flex-end; gap: 8px; padding: 8px 16px 12px; }
-.primary { background: var(--primary); color: var(--primary-fg); }
-.danger { color: var(--danger-text); }
 </style>
