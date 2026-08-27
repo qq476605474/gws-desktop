@@ -556,13 +556,20 @@ describe("DocsTab 命令操作", () => {
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(1)); // 命令结束后恰一次 refresh
   });
 
-  it("push：doc push <file> 于当前工作区，结束后刷新", async () => {
+  it("push：confirm 确认后才 exec——doc push <file> 于当前工作区，结束后刷新", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
     mountTab();
     await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
     mocks.runGws.mockClear();
 
+    // confirm 挂起：写远程操作未获确认前不得 exec
+    let resolveConfirm!: (v: boolean) => void;
+    mocks.confirm.mockImplementationOnce(() => new Promise<boolean>((r) => { resolveConfirm = r; }));
     clickButton("上传"); // 首行 技术方案.md
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("上传 技术方案.md 到 Confluence？"));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+
+    resolveConfirm(true); // 用户点击“确认”
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp", 30000),
     );
@@ -570,6 +577,20 @@ describe("DocsTab 命令操作", () => {
 
     await exitWith(1, 0);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
+  });
+
+  it("push：confirm 取消不发命令、不刷新", async () => {
+    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
+    mocks.runGws.mockClear();
+    mocks.confirm.mockResolvedValueOnce(false);
+
+    clickButton("上传"); // 首行 技术方案.md
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("上传 技术方案.md 到 Confluence？"));
+    await new Promise((r) => setTimeout(r, 0)); // 冲微任务：取消分支应已返回
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+    expect(mocks.runGws).not.toHaveBeenCalled();
   });
 
   it("commit：工具栏「commit 全部文档」无文件参数，于数据归属工作区执行，结束后刷新", async () => {

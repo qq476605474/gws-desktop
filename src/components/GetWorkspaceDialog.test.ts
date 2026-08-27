@@ -67,14 +67,19 @@ function setInput(idx: number, value: string) {
   input.dispatchEvent(new Event("input"));
 }
 
+/** 拉取按钮（「取消」之外的 primary 按钮） */
+function pullButton(): HTMLButtonElement {
+  const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+    .find((b) => b.textContent?.trim() === "拉取");
+  if (!btn) throw new Error("拉取按钮未找到");
+  return btn;
+}
+
 /** 点击拉取：先等 DOM 补丁——v-model 同步更新 branch，但按钮 disabled 属性
  *  要到 nextTick 才落到 DOM，同步点击会被（仍禁用的）按钮吞掉 */
 async function clickPull() {
   await nextTick();
-  const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
-    .find((b) => b.textContent?.trim() === "拉取");
-  if (!btn) throw new Error("拉取按钮未找到");
-  btn.click();
+  pullButton().click();
 }
 
 /** 等待第 runId 次 exec 完成 listen 订阅后发出退出码 */
@@ -128,6 +133,34 @@ describe("GetWorkspaceDialog", () => {
         30000,
       ),
     );
+  });
+
+  it("branch/name 前后空白：trim 后传参（\"feature-1 \" → 首参 \"feature-1\"）", async () => {
+    mountDialog();
+    setInput(0, "feature-1 ");
+    setInput(1, " demo ");
+    await clickPull();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["get", "feature-1", "--name", "demo"],
+        "/hub",
+        30000,
+      ),
+    );
+  });
+
+  it("纯空格 branch：拉取按钮 disabled，点击/派发事件均不 exec", async () => {
+    mountDialog();
+    setInput(0, "   ");
+    await nextTick();
+    const btn = pullButton();
+    expect(btn.disabled).toBe(true); // trim 后为空 → 禁用
+    // happy-dom 的 click() 会拦 disabled，再派发原生事件防程序化绕过——两层都不发命令
+    btn.click();
+    btn.dispatchEvent(new Event("click", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
   });
 
   it("命令失败（exit 1）：不 emit created/close，弹窗保留输入便于重试", async () => {

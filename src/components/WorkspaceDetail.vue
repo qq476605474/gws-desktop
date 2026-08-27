@@ -71,6 +71,7 @@ async function confirmThenDo(label: string, args: string[], question: string) {
       return; // 理论上不 reject；万一异常按取消处理
     }
     if (!ok) return;
+    if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令（同 EnvsTab.rmEnv）
     await doCmd(label, args);
   } finally {
     confirming.value = false;
@@ -95,6 +96,7 @@ async function removeWs() {
     return; // 理论上不 reject；万一异常按取消处理，避免组件崩
   }
   if (!ok) return;
+  if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令（同 EnvsTab.rmEnv）
   try {
     const run = await cmd.execDialog(`gws rm ${props.name} --force`, ["rm", props.name, "--force"], hub.path);
     await cmd.waitDone(run);

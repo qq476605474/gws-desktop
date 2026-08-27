@@ -6,6 +6,7 @@ export const HUB_ROOT = "__hub__";
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
@@ -137,19 +138,34 @@ async function create() {
 }
 
 async function push(file: string) {
-  if (cmd.isRunning()) return; // 按钮禁用渲染有间隙，入口再拦一道
+  // 防双击：同 create，submitting 兜底 exec 的 IPC 往返间隙
+  if (submitting.value || cmd.isRunning()) return;
+  // doc push 上传 Confluence 是写远程操作：先确认再执行（模式同 EnvsTab.rmEnv）
+  let ok = false;
+  try {
+    ok = await confirm(`上传 ${file} 到 Confluence？`);
+  } catch {
+    return; // 理论上不 reject；万一异常按取消处理
+  }
+  if (!ok) return;
+  if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令
+  submitting.value = true;
   try {
     const run = await cmd.execDialog(`gws doc push ${file}`, ["doc", "push", file], `${hub.path}/ws/${docsWs.value}`);
     await cmd.waitDone(run);
   } catch (e) {
     // 同 create：错误进展示位，仍刷新
     err.value = String(e);
+  } finally {
+    submitting.value = false;
   }
   await refresh();
 }
 
 async function commit() {
-  if (cmd.isRunning()) return;
+  // 防双击：同 create，submitting 兜底 exec 的 IPC 往返间隙
+  if (submitting.value || cmd.isRunning()) return;
+  submitting.value = true;
   try {
     // cwd 按数据归属取：doc commit 是 hub 级文档仓库的 git add -A，ws 目录与
     // hub 根都能让 gws 定位到 docs 仓库（hub 根时不能拼 /ws/__hub__——目录不存在）
@@ -159,6 +175,8 @@ async function commit() {
   } catch (e) {
     // 同 create：错误进展示位，仍刷新
     err.value = String(e);
+  } finally {
+    submitting.value = false;
   }
   await refresh();
 }

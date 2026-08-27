@@ -247,6 +247,44 @@ describe("EnvsTab 环境行展开模块", () => {
     expect(mocks.listDir).not.toHaveBeenCalled();
   });
 
+  it("rmEnv 成功后清展开缓存：删后重建同名环境再展开会重新 listDir", async () => {
+    mountTab();
+    mocks.listDir.mockResolvedValue(["cart-service"]);
+    envRow(0).click(); // 展开 dev
+    await vi.waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("/hub/envs/dev"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("cart-service"));
+    mocks.listDir.mockClear();
+
+    clickButton("移除"); // 首行 dev（confirm 默认 true）
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["env", "rm", "dev"], "/hub", 30000));
+    await exitWith(1, 0);
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
+
+    // 同会话重建同名环境（模拟后续刷新列表再现 dev）：再展开必须重新拉取，
+    // 不得命中 rmEnv 前的旧缓存（否则 listDir 不会被再次调用）
+    useHubStore().envs = ["dev", "pre"];
+    await nextTick();
+    envRow(0).click();
+    await vi.waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("/hub/envs/dev"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("cart-service"));
+  });
+
+  it("sync 后失效已展开行的模块缓存：listDir 对 dev 再次调用", async () => {
+    mountTab();
+    mocks.listDir.mockResolvedValue(["cart-service"]);
+    envRow(0).click(); // 展开 dev（listDir 调 1 次显示模块）
+    await vi.waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("/hub/envs/dev"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("cart-service"));
+    mocks.listDir.mockClear();
+
+    clickButton("同步最新代码");
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["sync"], "/hub", 30000));
+    await exitWith(1, 0);
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
+    // sync 补建模块目录会改变 envs/<名> 下的内容：invalidateModules 重拉已展开行
+    await vi.waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("/hub/envs/dev"));
+  });
+
   it("模块为空：显示（无模块，跑 gws sync 补建）", async () => {
     mountTab();
     mocks.listDir.mockResolvedValue([]);

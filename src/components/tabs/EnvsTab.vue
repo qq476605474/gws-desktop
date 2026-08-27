@@ -79,6 +79,11 @@ async function rmEnv(e: string) {
   try {
     const run = await cmd.execDialog(`gws env rm ${e}`, ["env", "rm", e], hub.path);
     await cmd.waitDone(run);
+    if (run.state === "done") {
+      // 移除成功：清该环境的展开缓存与展开态，防同会话删后重建同名环境命中旧缓存
+      delete modules.value[e];
+      delete open.value[e];
+    }
   } catch {
     // 同 addEnv：吞 reject，仍刷新
   }
