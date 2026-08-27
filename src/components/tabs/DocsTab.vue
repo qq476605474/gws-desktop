@@ -251,7 +251,7 @@ onMounted(refresh);
 </template>
 
 <style scoped>
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
 .group-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 /* table/th/td 基础样式全局化（base.css） */
 .muted { color: var(--fg-muted); font-size: 12px; }

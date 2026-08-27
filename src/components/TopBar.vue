@@ -33,7 +33,7 @@ async function switchHub() {
 <template>
   <header class="topbar">
     <span class="brand">GwsDesk</span>
-    <button @click="switchHub">{{ hub.path || "选择 Hub" }} ▾</button>
+    <button class="hub" :title="hub.path || '选择 Hub'" @click="switchHub">{{ hub.path || "选择 Hub" }} ▾</button>
     <nav>
       <button :class="{ active: tab === 'ws' }" @click="emit('update:tab', 'ws')">工作区</button>
       <button :class="{ active: tab === 'repos' }" @click="emit('update:tab', 'repos')">仓库</button>
@@ -49,6 +49,9 @@ async function switchHub() {
 <style scoped>
 .topbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
 .brand { font-weight: 700; }
+/* hub 路径可能很长：溢出 hidden 使按钮可收缩至内容以下（flex 项 min-width:auto 归零），
+   省略号截断 + title 提示完整路径；nav/其余按钮均已 nowrap 不会被压折 */
+.hub { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
 .spacer { flex: 1; }
 nav { display: flex; gap: 4px; }
 /* 显式 fg：不依赖 UA 按钮色（未设 color-scheme 时 dark 主题下黑字压深底仅 1.80:1）。

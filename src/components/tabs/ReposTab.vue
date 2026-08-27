@@ -86,7 +86,7 @@ async function rm(name: string) {
 </template>
 
 <style scoped>
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .group-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .repo-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 6px; }
 .repo-row > span { display: inline-flex; align-items: center; gap: 8px; }

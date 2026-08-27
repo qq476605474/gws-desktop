@@ -24,8 +24,10 @@ button, input, select {
 }
 
 /* 弹窗/工具栏内的行内控件由局部 flex:1 或显式宽度接管（max-width 防超长 placeholder 撑爆）；
-   按钮 width:auto——按钮宽度应随文字走，全宽按钮反而是工具栏大忌 */
-button { width: auto; max-width: none; }
+   按钮 width:auto——按钮宽度应随文字走，全宽按钮反而是工具栏大忌。
+   nowrap：中文在任意字符间可断行，flex 行空间不足时按钮会被压缩、文字在按钮内部
+   折成两行；锁定单行后放不下由容器 flex-wrap 整按钮换行 */
+button { width: auto; max-width: none; white-space: nowrap; }
 
 button {
   border: 1px solid var(--border);

@@ -21,5 +21,6 @@ async function terminal() {
 </template>
 
 <style scoped>
-.pa { display: inline-flex; gap: 4px; }
+/* flex-shrink:0：所在行（表格末列/行卡片）空间不足时不压缩本组，否则按钮被挤变形 */
+.pa { display: inline-flex; gap: 4px; flex-shrink: 0; }
 </style>

@@ -141,7 +141,7 @@ async function sync() {
 </template>
 
 <style scoped>
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .group-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .env-item { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 6px; }
 .env-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; cursor: pointer; }

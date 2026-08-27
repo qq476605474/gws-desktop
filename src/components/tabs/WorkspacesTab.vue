@@ -45,7 +45,7 @@ onMounted(() => hub.refreshAll());
 </template>
 
 <style scoped>
-.toolbar { display: flex; gap: 8px; margin-bottom: 12px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .ws-row { display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 12px; margin-bottom: 6px; cursor: pointer; }
 .ws-row:hover { background: var(--bg-soft); }
 .ws-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
