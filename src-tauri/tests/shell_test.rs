@@ -1,7 +1,66 @@
 use gws_desk_lib::shell::{
     applescript_escape, detect_terminal, iterm_installed, list_dir, macos_terminal_script,
-    parse_version_from_body, read_text_file, shell_quote_path, TerminalPreference,
+    parse_version_from_body, read_text_file, shell_quote_path, terminal_options,
+    TerminalPreference,
 };
+
+#[test]
+fn terminal_options_first_is_system_with_detected_label() {
+    let opts = terminal_options();
+    let first = opts.first().expect("至少一项（system 恒在）");
+    assert_eq!(first.id, "system");
+    assert!(
+        first.label.contains("跟随系统"),
+        "system 项应标注跟随系统，实际: {}",
+        first.label
+    );
+    // system 之后不允许再出现 system
+    assert!(opts[1..].iter().all(|o| o.id != "system"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn terminal_options_macos_only_lists_installed_apps() {
+    let opts = terminal_options();
+    let ids: Vec<&str> = opts.iter().map(|o| o.id.as_str()).collect();
+    // Terminal.app 无独立安装概念（系统自带），恒在；iTerm2/Warp 仅装了才列
+    assert!(ids.contains(&"Terminal.app"));
+    assert_eq!(ids.contains(&"iTerm2"), iterm_installed());
+    assert!(ids.iter().filter(|id| **id == "Warp").count() <= 1);
+    // mac 专属之外的终端不应出现
+    for o in &opts {
+        assert!(
+            matches!(o.id.as_str(), "system" | "iTerm2" | "Terminal.app" | "Warp"),
+            "macOS 不应出现其他终端: {}",
+            o.id
+        );
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn terminal_options_linux_only_lists_installed_terms() {
+    let opts = terminal_options();
+    let ids: Vec<&str> = opts.iter().map(|o| o.id.as_str()).collect();
+    for o in &opts[1..] {
+        assert!(
+            ["gnome-terminal", "konsole", "xfce4-terminal", "x-terminal-emulator"]
+                .contains(&o.id.as_str()),
+            "Linux 不应出现其他终端: {}",
+            o.id
+        );
+    }
+    assert!(!ids.contains(&"iTerm2"), "Linux 不应出现 macOS 终端");
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn terminal_options_windows_system_only() {
+    // open_in_terminal 在 Windows 不读 terminal 参数（恒 wt→cmd 回退），只留跟随系统
+    let opts = terminal_options();
+    assert_eq!(opts.len(), 1);
+    assert_eq!(opts[0].id, "system");
+}
 
 #[test]
 fn force_preference_returns_name_as_is() {

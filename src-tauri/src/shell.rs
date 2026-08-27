@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use serde::Serialize;
 use tauri::AppHandle;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
@@ -127,6 +128,57 @@ pub fn copy_text(text: String, app: AppHandle) -> Result<(), String> {
     app.clipboard()
         .write_text(text)
         .map_err(|e| format!("复制失败: {e}"))
+}
+
+/// 设置面板的终端候选项。id 传回 open_in_terminal 的 terminal 参数（"system" 表示跟随系统）。
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct TerminalOption {
+    pub id: String,
+    pub label: String,
+}
+
+/// macOS .app 是否安装（系统或用户 Applications）。
+fn app_installed(name: &str) -> bool {
+    if Path::new("/Applications").join(format!("{name}.app")).exists() {
+        return true;
+    }
+    std::env::var_os("HOME").is_some_and(|home| {
+        Path::new(&home).join("Applications").join(format!("{name}.app")).exists()
+    })
+}
+
+/// 设置面板的终端候选：按当前 OS 给出该 OS 合理的列表（只列实际安装的），
+/// "system" 恒在首位并标注实际会用的终端——硬编码 iTerm2 等 mac 专属项在
+/// Linux/Windows 上既不可选也不诚实。
+#[tauri::command]
+pub fn terminal_options() -> Vec<TerminalOption> {
+    let mut opts = Vec::new();
+    let mut push = |id: &str, label: String| {
+        opts.push(TerminalOption { id: id.to_string(), label });
+    };
+    let detected = detect_terminal(&TerminalPreference::FollowSystem);
+    if cfg!(target_os = "macos") {
+        push("system", format!("跟随系统（当前 {detected}）"));
+        if iterm_installed() {
+            push("iTerm2", "iTerm2".to_string());
+        }
+        push("Terminal.app", "Terminal.app".to_string());
+        if app_installed("Warp") {
+            push("Warp", "Warp".to_string());
+        }
+    } else if cfg!(target_os = "linux") {
+        push("system", format!("跟随系统（当前 {detected}）"));
+        for name in ["gnome-terminal", "konsole", "xfce4-terminal", "x-terminal-emulator"] {
+            if find_in_path(name).is_some() {
+                push(name, name.to_string());
+            }
+        }
+    } else {
+        // Windows：open_in_terminal 不读 terminal 参数（恒 wt→cmd 回退），
+        // 与其给出不起作用的选项，不如只留跟随系统
+        push("system", format!("跟随系统（当前 {detected}）"));
+    }
+    opts
 }
 
 /// 第一层（shell）：路径包成单引号 token，形如 'it'\''s'。

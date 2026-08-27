@@ -2,7 +2,9 @@ import { defineStore } from "pinia";
 import { ref, watch } from "vue";
 import { load, Store } from "@tauri-apps/plugin-store";
 
-export type TerminalPref = "system" | "iTerm2" | "Terminal.app" | "Warp";
+/** 终端偏好：终端名（如 iTerm2，候选由 Rust terminal_options 按 OS 给出）或 "system"。
+ *  不再用字符串字面量联合——候选随 OS 动态，静态枚举注定在某平台失真 */
+export type TerminalPref = string;
 export type Theme = "light" | "dark" | "macos";
 
 export const useSettingsStore = defineStore("settings", () => {

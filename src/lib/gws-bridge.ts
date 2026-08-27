@@ -65,6 +65,11 @@ export function copyText(text: string): Promise<void> {
 export function openInTerminal(path: string, terminal: string | null): Promise<void> {
   return invoke("open_in_terminal", { path, terminal });
 }
+export interface TerminalOption { id: string; label: string; }
+/** 设置面板的终端候选：Rust 按当前 OS 与实际安装情况给出（"system" 恒在首位）。 */
+export function terminalOptions(): Promise<TerminalOption[]> {
+  return invoke<TerminalOption[]>("terminal_options");
+}
 /** 检测 gws 是否已安装（PATH 中可找到可执行文件）。 */
 export function checkGwsInstalled(): Promise<boolean> {
   return invoke<boolean>("check_gws_installed");

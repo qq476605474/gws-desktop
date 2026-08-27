@@ -1,8 +1,23 @@
 <script setup lang="ts">
+import { onMounted, ref } from "vue";
 import { useSettingsStore } from "../stores/settings";
+import { terminalOptions, type TerminalOption } from "../lib/gws-bridge";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 const settings = useSettingsStore();
+/** 终端候选由 Rust 按当前 OS + 实际安装情况给出（加载前只留 system 项防空白） */
+const terms = ref<TerminalOption[]>([{ id: "system", label: "跟随系统" }]);
+
+onMounted(async () => {
+  try {
+    terms.value = await terminalOptions();
+    // 跨平台迁移防御：存量偏好不在当前 OS 的候选里（如 mac 上存的 iTerm2 带到 Linux）
+    // 时回退 system，否则 select 显示空白且旧值永不可达
+    if (!terms.value.some((t) => t.id === settings.terminal)) settings.terminal = "system";
+  } catch {
+    // IPC 失败（极罕见）：保留 system 项，select 仍可用
+  }
+});
 </script>
 
 <template>
@@ -18,12 +33,9 @@ const settings = useSettingsStore();
         </select>
       </label>
       <label>
-        在终端中打开（默认跟随系统）
+        在终端中打开
         <select v-model="settings.terminal">
-          <option value="system">跟随系统（有 iTerm2 用 iTerm2）</option>
-          <option value="iTerm2">iTerm2</option>
-          <option value="Terminal.app">Terminal.app</option>
-          <option value="Warp">Warp</option>
+          <option v-for="t in terms" :key="t.id" :value="t.id">{{ t.label }}</option>
         </select>
       </label>
       <div class="actions"><button @click="emit('close')">完成</button></div>

@@ -17,6 +17,7 @@ pub fn run() {
             shell::open_in_terminal,
             shell::open_path,
             shell::copy_text,
+            shell::terminal_options,
             shell::check_gws_installed,
             shell::latest_gws_version,
             shell::hub_exists,

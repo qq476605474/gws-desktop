@@ -9,12 +9,17 @@ const mocks = vi.hoisted(() => {
   const values = new Map<string, unknown>();
   const get = vi.fn(async (key: string) => values.get(key));
   const set = vi.fn(async (_key: string, _value: unknown) => {});
-  return { values, get, set, load: vi.fn(async () => ({ get, set })) };
+  const terminalOptions = vi.fn<() => Promise<{ id: string; label: string }[]>>();
+  return { values, get, set, load: vi.fn(async () => ({ get, set })), terminalOptions };
 });
 
 vi.mock("@tauri-apps/plugin-store", () => ({
   load: mocks.load,
   Store: class Store {},
+}));
+
+vi.mock("../lib/gws-bridge", () => ({
+  terminalOptions: mocks.terminalOptions,
 }));
 
 import { useSettingsStore } from "../stores/settings";
@@ -23,7 +28,17 @@ import SettingsDialog from "./SettingsDialog.vue";
 let app: App | null = null;
 let el: HTMLElement | null = null;
 
-/** 挂载设置弹窗：先 init settings store（注册持久化 watch + applyTheme），close 经 props 探针收集 */
+/** 模拟 Rust terminal_options 的返回（macOS 场景：system + 已装 iTerm2 的典型集） */
+function mockTerms() {
+  mocks.terminalOptions.mockResolvedValue([
+    { id: "system", label: "跟随系统（当前 iTerm2）" },
+    { id: "iTerm2", label: "iTerm2" },
+    { id: "Terminal.app", label: "Terminal.app" },
+  ]);
+}
+
+/** 挂载设置弹窗：先 init settings store（注册持久化 watch + applyTheme），close 经 props 探针收集。
+ *  终端候选经 onMounted 异步拉取，挂载后多冲一轮微任务等 terms 就位 */
 async function mountDialog(onClose: () => void) {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -34,6 +49,8 @@ async function mountDialog(onClose: () => void) {
   app = createApp(SettingsDialog, { onClose });
   app.use(pinia);
   app.mount(el);
+  await nextTick();
+  await new Promise((resolve) => setTimeout(resolve, 0));
   await nextTick();
   return settings;
 }
@@ -60,6 +77,7 @@ async function flush() {
 beforeEach(() => {
   mocks.values.clear();
   vi.clearAllMocks();
+  mockTerms(); // 默认给一份 macOS 候选，个别用例按需覆盖
   document.documentElement.removeAttribute("data-theme");
 });
 
@@ -71,22 +89,35 @@ afterEach(() => {
 });
 
 describe("SettingsDialog 渲染", () => {
-  it("两个 select 初值绑定 store 当前值（init 读取持久化 theme/terminal）", async () => {
+  it("两个 select 初值绑定 store 当前值；终端候选来自 Rust terminal_options（OS 相关、动态）", async () => {
     mocks.values.set("theme", "dark");
-    mocks.values.set("terminal", "Warp");
+    mocks.values.set("terminal", "iTerm2");
     await mountDialog(vi.fn());
     expect(selectAt(0).value).toBe("dark");
-    expect(selectAt(1).value).toBe("Warp");
-    // option value 与 settings store 的 Theme/TerminalPref 类型字面量一一对应
+    expect(selectAt(1).value).toBe("iTerm2");
     expect(Array.from(selectAt(0).options).map((o) => o.value)).toEqual(["light", "dark", "macos"]);
     expect(Array.from(selectAt(1).options).map((o) => o.value)).toEqual([
-      "system", "iTerm2", "Terminal.app", "Warp",
+      "system", "iTerm2", "Terminal.app",
     ]);
   });
 
   it("无持久化时用默认值：theme=light、terminal=system", async () => {
     await mountDialog(vi.fn());
     expect(selectAt(0).value).toBe("light");
+    expect(selectAt(1).value).toBe("system");
+  });
+
+  it("存量偏好不在当前 OS 候选里（跨平台迁移）：回退 system 防空白 select", async () => {
+    mocks.values.set("terminal", "Warp"); // 候选里无 Warp（未装）
+    const settings = await mountDialog(vi.fn());
+    expect(selectAt(1).value).toBe("system");
+    expect(settings.terminal).toBe("system");
+  });
+
+  it("terminal_options 失败（IPC 异常）：保留 system 兜底项，select 仍可用", async () => {
+    mocks.terminalOptions.mockRejectedValue(new Error("ipc down"));
+    await mountDialog(vi.fn());
+    expect(Array.from(selectAt(1).options).map((o) => o.value)).toEqual(["system"]);
     expect(selectAt(1).value).toBe("system");
   });
 });
