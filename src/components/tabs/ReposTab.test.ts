@@ -125,7 +125,7 @@ describe("ReposTab", () => {
     mountTab();
     setInput("https://git.example.com/a.git   https://git.example.com/b.git");
     await nextTick();
-    clickButton("+ 添加仓库");
+    clickButton("+ 添加主干");
 
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
     expect(mocks.runGwsStream).toHaveBeenCalledWith(
@@ -149,7 +149,7 @@ describe("ReposTab", () => {
     mocks.runGwsStream.mockRejectedValueOnce(new Error("invoke 失败"));
     setInput("https://git.example.com/a.git");
     await nextTick();
-    clickButton("+ 添加仓库");
+    clickButton("+ 添加主干");
 
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
     await nextTick();
@@ -160,7 +160,7 @@ describe("ReposTab", () => {
     mountTab();
     setInput("https://git.example.com/a.git");
     await nextTick();
-    clickButton("+ 添加仓库");
+    clickButton("+ 添加主干");
 
     await exitWith(1, 1); // repo add 失败
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
@@ -195,7 +195,7 @@ describe("ReposTab", () => {
     mocks.confirm.mockResolvedValueOnce(false);
     clickButton("移除"); // 首行 order-service
 
-    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("移除仓库 order-service？"));
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("移除主干 order-service？"));
     await nextTick();
     expect(mocks.runGwsStream).not.toHaveBeenCalled();
     expect(mocks.runGws).not.toHaveBeenCalled();
@@ -216,8 +216,8 @@ describe("ReposTab", () => {
     setInput("https://git.example.com/a.git");
     await nextTick();
     // 同一任务里同步连点两次：Vue 未及重渲染禁用按钮，第二击只能靠 submitting 守卫拦截
-    clickButton("+ 添加仓库");
-    clickButton("+ 添加仓库");
+    clickButton("+ 添加主干");
+    clickButton("+ 添加主干");
 
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
     expect(mocks.runGwsStream).toHaveBeenCalledWith(

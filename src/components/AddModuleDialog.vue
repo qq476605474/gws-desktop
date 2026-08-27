@@ -58,7 +58,7 @@ async function add() {
         <input type="checkbox" :value="r.name" v-model="selected" :disabled="submitting" /> {{ r.name }}
       </label>
       <!-- 有仓库但全被过滤成空列表时给出明确空态，避免一个“空白弹窗” -->
-      <p v-if="hub.repos.length && !candidates.length" class="empty">该工作区已包含所有模块</p>
+      <p v-if="hub.repos.length && !candidates.length" class="empty">该需求已包含所有模块</p>
       <p v-if="progress" class="progress">{{ progress }}</p>
       <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">

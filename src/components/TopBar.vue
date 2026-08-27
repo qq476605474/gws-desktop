@@ -19,7 +19,7 @@ const settings = useSettingsStore();
 async function switchHub() {
   let ok = false;
   try {
-    ok = await confirm("要切换/重新选择 hub 目录吗？当前页面状态（如已打开的工作区详情）将丢失。");
+    ok = await confirm("要切换/重新选择 hub 目录吗？当前页面状态（如已打开的需求详情）将丢失。");
   } catch {
     return; // 理论上不 reject；万一异常按取消处理
   }
@@ -35,8 +35,8 @@ async function switchHub() {
     <span class="brand">GwsDesk</span>
     <button class="hub" :title="hub.path || '选择 Hub'" @click="switchHub">{{ hub.path || "选择 Hub" }} ▾</button>
     <nav>
-      <button :class="{ active: tab === 'ws' }" @click="emit('update:tab', 'ws')">工作区</button>
-      <button :class="{ active: tab === 'repos' }" @click="emit('update:tab', 'repos')">仓库</button>
+      <button :class="{ active: tab === 'ws' }" @click="emit('update:tab', 'ws')">需求</button>
+      <button :class="{ active: tab === 'repos' }" @click="emit('update:tab', 'repos')">主干</button>
       <button :class="{ active: tab === 'envs' }" @click="emit('update:tab', 'envs')">环境</button>
       <button :class="{ active: tab === 'docs' }" @click="emit('update:tab', 'docs')">文档</button>
     </nav>

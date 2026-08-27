@@ -44,7 +44,7 @@ async function pull() {
     <div class="dialog">
       <h3>拉取已推送的需求</h3>
       <label>远程 feature 分支 <input v-model="branch" autocapitalize="off" spellcheck="false" placeholder="feature-20260818-checkout-revamp" /></label>
-      <label>本地工作区名 <input v-model="name" autocapitalize="off" spellcheck="false" placeholder="留空自动从分支名反推" /></label>
+      <label>本地需求名 <input v-model="name" autocapitalize="off" spellcheck="false" placeholder="留空自动从分支名反推" /></label>
       <label>标题 <input v-model="title" autocapitalize="off" spellcheck="false" placeholder="中文标题（可选）" /></label>
       <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">

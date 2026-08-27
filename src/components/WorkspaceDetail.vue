@@ -84,14 +84,14 @@ function onSyncMain(from: string) {
   confirmThenDo(
     `gws sync-main${from ? ` --from ${from}` : ""}`,
     ["sync-main", "--yes", ...(from ? ["--from", from] : [])],
-    `确认把 ${from || "创建时基线（默认主干）"} 的最新提交合进当前工作区？`,
+    `确认把 ${from || "创建时基线（默认主干）"} 的最新提交合进当前需求？`,
   );
 }
 async function removeWs() {
   // macOS WKWebView 下原生 window.confirm 恒返回 false，须用插件的原生对话框
   let ok = false;
   try {
-    ok = await confirm(`确认删除工作区 ${props.name}？文档自动归档，未推送代码分支保留。`);
+    ok = await confirm(`确认删除需求 ${props.name}？文档自动归档，未推送代码分支保留。`);
   } catch {
     return; // 理论上不 reject；万一异常按取消处理，避免组件崩
   }
@@ -134,13 +134,13 @@ onMounted(refresh);
         <option value="" disabled>选择环境…</option>
         <option v-for="e in hub.envs" :key="e" :value="e">{{ e }}</option>
       </select>
-      <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv}`, ['merge', mergeEnv], `确认把 ${mergeEnv} 合并进当前工作区？（本地合并不推送）`)">Merge（本地）</button>
+      <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv}`, ['merge', mergeEnv], `确认把 ${mergeEnv} 合并进当前需求？（本地合并不推送）`)">Merge（本地）</button>
       <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv} --push`, ['merge', mergeEnv, '--push'], `确认合并到 ${mergeEnv} 并推送到远程？`)">Merge+Push</button>
       <!-- gws sync 移出工作区（职责在仓库/环境 tab）；sync-main 留此且 --from 可选，经弹窗收集来源 -->
       <button :disabled="cmd.isRunning()" @click="showSyncMain = true">同步最新代码</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws done', ['done'])">Done 校验</button>
       <button :disabled="cmd.isRunning()" @click="showAdd = true">+ 模块</button>
-      <button class="danger" :disabled="cmd.isRunning()" @click="removeWs">删除工作区</button>
+      <button class="danger" :disabled="cmd.isRunning()" @click="removeWs">删除需求</button>
     </div>
     <p v-if="stErr" class="error">
       {{ stErr }}

@@ -62,7 +62,7 @@ async function create() {
 <template>
   <div class="mask" @click.self="!submitting && emit('close')">
     <div class="dialog">
-      <h3>新建需求工作区</h3>
+      <h3>新建需求</h3>
       <!-- gws new 的名称是必填位置参数（无留空反推：留空直接报用法错误）；
            默认分支 = <前缀>-<日期YYYYMMDD>-<名称>，标题缺省同名称 -->
       <!-- customBranch 非空：名称已在分支名里（反推规则同 gws get），隐藏输入框改为实时展示反推结果 -->

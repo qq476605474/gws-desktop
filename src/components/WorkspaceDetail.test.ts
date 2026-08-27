@@ -196,7 +196,7 @@ describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
     const { confirm } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(confirm).mockResolvedValue(true);
     await mountReady();
-    clickText("删除工作区");
+    clickText("删除需求");
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["rm", "demo", "--force"], "/hub", 30000),
     );

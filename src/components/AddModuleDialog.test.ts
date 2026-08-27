@@ -162,6 +162,6 @@ describe("AddModuleDialog 已有模块过滤", () => {
     hub.repos = [{ name: "mod-a", mainBranch: "main" }];
     await nextTick();
     expect(checkboxes()).toHaveLength(0);
-    expect(el!.textContent).toContain("该工作区已包含所有模块");
+    expect(el!.textContent).toContain("该需求已包含所有模块");
   });
 });

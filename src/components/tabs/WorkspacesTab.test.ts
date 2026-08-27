@@ -121,10 +121,10 @@ describe("WorkspacesTab 列表", () => {
     expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub");
   });
 
-  it("空列表显示占位（暂无工作区）", async () => {
+  it("空列表显示占位（暂无需求）", async () => {
     mocks.runGws.mockImplementation(async () => ({ code: 0, output: "" }));
     mountTab();
-    await vi.waitFor(() => expect(el!.textContent).toContain("(暂无工作区)"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("(暂无需求)"));
     expect(el!.querySelectorAll(".ws-row")).toHaveLength(0);
   });
 
@@ -170,7 +170,7 @@ describe("WorkspacesTab 互斥详情（真跳转）", () => {
     expect(el!.querySelectorAll(".ws-row")).toHaveLength(0);
     expect(el!.querySelector(".toolbar")).toBeNull();
     expect(el!.textContent).not.toContain("+ 新建需求");
-    expect(el!.textContent).not.toContain("(暂无工作区)");
+    expect(el!.textContent).not.toContain("(暂无需求)");
   });
 
   it("详情 ← 返回：列表恢复、详情卸载（无数据残留）", async () => {
