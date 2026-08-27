@@ -198,7 +198,7 @@ describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
   });
 });
 
-describe("WorkspaceDetail Push 前确认（写远程操作防误推）", () => {
+describe("WorkspaceDetail Push / Merge 前确认（破坏性操作防误点）", () => {
   it("Push：confirm 取消 → 不执行命令；Pull 等读侧操作不经 confirm", async () => {
     const { confirm } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(confirm).mockResolvedValue(false);
@@ -273,8 +273,9 @@ describe("WorkspaceDetail Push 前确认（写远程操作防误推）", () => {
     );
   });
 
-  it("Merge（本地）不弹确认：直接执行 merge <env>", async () => {
+  it("Merge（本地）：confirm 取消 → 不执行；确认 → 执行 merge <env>（本地合并误点同样危险）", async () => {
     const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(false);
     await mountReady();
     const hub = useHubStore();
     hub.envs = ["dev"];
@@ -284,10 +285,16 @@ describe("WorkspaceDetail Push 前确认（写远程操作防误推）", () => {
     select.dispatchEvent(new Event("change"));
     await nextTick();
     clickText("Merge（本地）");
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("dev");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+
+    vi.mocked(confirm).mockResolvedValue(true);
+    clickText("Merge（本地）");
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["merge", "dev"], "/hub/ws/demo", 30000),
     );
-    expect(confirm).not.toHaveBeenCalled();
   });
 });
 

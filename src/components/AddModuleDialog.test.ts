@@ -43,7 +43,7 @@ let app: App | null = null;
 let el: HTMLElement | null = null;
 
 /** 挂载弹窗（repo 列表直接写入 hub store），事件经 props 探针收集 */
-function mountDialog(onAdded: () => void, onClose: () => void) {
+function mountDialog(onAdded: () => void, onClose: () => void, existing: string[] = []) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const hub = useHubStore();
@@ -54,7 +54,7 @@ function mountDialog(onAdded: () => void, onClose: () => void) {
   ];
   el = document.createElement("div");
   document.body.appendChild(el);
-  app = createApp(AddModuleDialog, { wsPath: "/hub/ws/demo", onAdded, onClose });
+  app = createApp(AddModuleDialog, { wsPath: "/hub/ws/demo", existing, onAdded, onClose });
   app.use(pinia);
   app.mount(el);
 }
@@ -148,5 +148,20 @@ describe("AddModuleDialog.add 部分失败处理", () => {
     expect(el!.textContent).not.toContain("部分模块添加失败");
     // 序列结束（finally release）：计数归零，弹窗可手动关闭
     expect(cmd.holdCount).toBe(0);
+  });
+});
+
+describe("AddModuleDialog 已有模块过滤", () => {
+  it("existing 中的模块不列为候选；全部被过滤时显示空态提示", async () => {
+    mountDialog(vi.fn(), vi.fn(), ["mod-a"]);
+    expect(checkboxes().map((b) => b.value)).toEqual(["mod-b"]); // mod-a 已在工作区 → 不再列出
+    expect(el!.textContent).not.toContain("mod-a");
+
+    // 仅剩的候选 mod-a 也已在工作区 → 全过滤：无 checkbox，给出明确空态
+    const hub = useHubStore();
+    hub.repos = [{ name: "mod-a", mainBranch: "main" }];
+    await nextTick();
+    expect(checkboxes()).toHaveLength(0);
+    expect(el!.textContent).toContain("该工作区已包含所有模块");
   });
 });

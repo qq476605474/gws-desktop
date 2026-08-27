@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useHubStore } from "../stores/hub";
 import { useCmdStore } from "../stores/cmd";
 
-const props = defineProps<{ wsPath: string }>();
+/** existing：该工作区已有模块名——这些模块不再列为候选（gws add 重复添加只会报错/重复，不友好） */
+const props = defineProps<{ wsPath: string; existing: string[] }>();
 const emit = defineEmits<{ (e: "close"): void; (e: "added"): void }>();
 const hub = useHubStore();
 const cmd = useCmdStore();
@@ -11,6 +12,7 @@ const selected = ref<string[]>([]);
 const submitting = ref(false);
 const err = ref("");
 const progress = ref("");
+const candidates = computed(() => hub.repos.filter((r) => !props.existing.includes(r.name)));
 
 async function add() {
   if (submitting.value) return;
@@ -52,9 +54,11 @@ async function add() {
   <div class="mask" @click.self="!submitting && emit('close')">
     <div class="dialog">
       <h3>增加模块</h3>
-      <label v-for="r in hub.repos" :key="r.name">
+      <label v-for="r in candidates" :key="r.name">
         <input type="checkbox" :value="r.name" v-model="selected" :disabled="submitting" /> {{ r.name }}
       </label>
+      <!-- 有仓库但全被过滤成空列表时给出明确空态，避免一个“空白弹窗” -->
+      <p v-if="hub.repos.length && !candidates.length" class="empty">该工作区已包含所有模块</p>
       <p v-if="progress" class="progress">{{ progress }}</p>
       <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">
@@ -72,5 +76,6 @@ async function add() {
 label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .progress { color: var(--fg-muted); font-size: 13px; margin: 0; }
+.empty { color: var(--fg-muted); font-size: 13px; margin: 0; }
 .err { color: var(--danger-text); font-size: 13px; margin: 0; }
 </style>

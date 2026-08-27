@@ -29,7 +29,8 @@ onMounted(() => hub.refreshAll());
     <div v-for="ws in hub.workspaces" :key="ws.name" class="ws-row" @click="detail = ws.name">
       <div class="ws-main">
         <strong>{{ ws.name }}</strong>
-        <span class="muted">{{ ws.title }}</span>
+        <!-- gws new 未填标题时 title 缺省=name：同名不再重复显示（一深一浅看着冗余），空 title 同样不渲染 -->
+        <span v-if="ws.title && ws.name !== ws.title" class="muted">{{ ws.title }}</span>
         <code class="branch">{{ ws.branch }}</code>
       </div>
       <PathActions :path="`${hub.path}/ws/${ws.name}`" />

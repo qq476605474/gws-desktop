@@ -127,6 +127,29 @@ describe("WorkspacesTab 列表", () => {
     await vi.waitFor(() => expect(el!.textContent).toContain("(暂无工作区)"));
     expect(el!.querySelectorAll(".ws-row")).toHaveLength(0);
   });
+
+  it("name 与 title 相同（缺省 title=name）只显示一次；不同则两者都显示", async () => {
+    // 分支名不含工作区名，textContent 计数才不受分支列干扰
+    const lsSameTitle =
+      "名称              标题            阶段    模块    分支\n" +
+      "feat-a            feat-a          dev     3       feature-1\n" +
+      "feat-b            购物车改版      dev     2       feature-2\n";
+    mocks.runGws.mockImplementation(async (args: string[]) => {
+      if (args[0] === "ls") return { code: 0, output: lsSameTitle };
+      return { code: 0, output: "" };
+    });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelectorAll(".ws-row")).toHaveLength(2));
+    const rows = Array.from(el!.querySelectorAll(".ws-row"));
+    const main = (i: number) => rows[i]!.querySelector(".ws-main")!.textContent ?? "";
+    // feat-a：name===title → 该文本整行只出现一次（修复前 strong+muted 深浅重复两次），title span 不渲染
+    expect((main(0).match(/feat-a/g) ?? []).length).toBe(1);
+    expect(rows[0]!.querySelector(".ws-main .muted")).toBeNull();
+    // feat-b：name!==title → name 与 title 都渲染
+    expect((main(1).match(/feat-b/g) ?? []).length).toBe(1);
+    expect(main(1)).toContain("购物车改版");
+    expect(rows[1]!.querySelector(".ws-main .muted")).toBeTruthy();
+  });
 });
 
 describe("WorkspacesTab 互斥详情（真跳转）", () => {

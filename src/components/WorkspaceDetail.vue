@@ -59,7 +59,7 @@ async function doCmd(label: string, args: string[], third?: ExecOpts | string) {
 /** confirm 的 IPC 往返间隙重入守卫：双击 Push 可排队两次 confirm()，
  *  连点两次“确定”则命令执行两次；此时 run 尚未启动、isRunning 不生效，须本地 ref 拦截 */
 const confirming = ref(false);
-/** Push / Merge+Push 会写远程：先原生确认再执行（防误推），其余操作不加确认 */
+/** Push / Merge 系列为破坏性操作（写远程、合并分支，误点难撤销）：先原生确认再执行，读侧操作不加确认 */
 async function confirmThenDo(label: string, args: string[], question: string) {
   if (confirming.value) return;
   confirming.value = true;
@@ -121,7 +121,7 @@ onMounted(refresh);
         <option value="" disabled>选择环境…</option>
         <option v-for="e in hub.envs" :key="e" :value="e">{{ e }}</option>
       </select>
-      <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && doCmd(`gws merge ${mergeEnv}`, ['merge', mergeEnv])">Merge（本地）</button>
+      <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv}`, ['merge', mergeEnv], `确认把 ${mergeEnv} 合并进当前工作区？（本地合并不推送）`)">Merge（本地）</button>
       <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv} --push`, ['merge', mergeEnv, '--push'], `确认合并到 ${mergeEnv} 并推送到远程？`)">Merge+Push</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws sync-main', ['sync-main', '--yes'])">Sync-main</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws sync', ['sync'], hub.path)">Sync</button>
@@ -149,7 +149,7 @@ onMounted(refresh);
     </table>
     <!-- 仅在无数据且无错误时才显示加载中：stErr 时上方错误行已给出失败原因与重试入口 -->
     <p v-else-if="!stErr" class="muted">加载中…</p>
-    <AddModuleDialog v-if="showAdd" :ws-path="wsPath" @close="showAdd = false" @added="refresh" />
+    <AddModuleDialog v-if="showAdd" :ws-path="wsPath" :existing="st ? st.modules.map((m) => m.name) : []" @close="showAdd = false" @added="refresh" />
   </div>
 </template>
 
