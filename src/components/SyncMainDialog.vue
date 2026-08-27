@@ -7,8 +7,8 @@ const emit = defineEmits<{ (e: "close"): void; (e: "run", from: string): void }>
 const from = ref(props.defaultFrom ?? "");
 
 function start() {
-  // 执行由父组件接手（confirm + 命令弹窗）：run 后随即 close，本弹窗不留驻也无在途态可防重入
-  emit("run", from.value);
+  // 纯空格视同留空（创建时基线）：不 trim 会把 --from "  " 传给 gws 导致 rev-parse 失败
+  emit("run", from.value.trim());
   emit("close");
 }
 </script>

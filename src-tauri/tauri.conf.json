@@ -10,7 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "windows": [{ "title": "GWS Desk", "width": 1100, "height": 720, "minWidth": 900, "minHeight": 600 }],
+    "windows": [{ "title": "GWS Desk", "width": 1280, "height": 800, "minWidth": 900, "minHeight": 600 }],
     "security": { "csp": null }
   },
   "bundle": { "active": true, "targets": ["dmg", "app"], "icon": [] }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useHubStore } from "../stores/hub";
+import { useSettingsStore } from "../stores/settings";
 import { navigate } from "../router";
 
 export type Tab = "ws" | "repos" | "envs" | "docs";
@@ -11,8 +12,9 @@ const emit = defineEmits<{
   (e: "open-settings"): void;
 }>();
 const hub = useHubStore();
+const settings = useSettingsStore();
 
-// 防误触：hub 按钮点击不是切 tab 而是离开整个 main（StartupView 见 lastHub 自动回跳），
+// 防误触：hub 按钮点击不是切 tab 而是离开整个 main，
 // WorkspacesTab 将重挂载、已开详情与滚动全丢——先原生确认，确认后才跳转
 async function switchHub() {
   let ok = false;
@@ -22,6 +24,8 @@ async function switchHub() {
     return; // 理论上不 reject；万一异常按取消处理
   }
   if (!ok) return;
+  // 清 lastHub：否则 StartupView 挂载即读 lastHub 自动回跳 main，用户根本没机会选新 hub
+  settings.lastHub = "";
   navigate("startup");
 }
 </script>

@@ -76,11 +76,17 @@ describe("TopBar hub 路径按钮防误触", () => {
     expect(mocks.navigate).not.toHaveBeenCalled();
   });
 
-  it("confirm 确认 → navigate('startup')", async () => {
+  it("confirm 确认 → 清 lastHub 并 navigate('startup')（否则 StartupView 自动回跳，用户选不了新 hub）", async () => {
     mountTopBar();
+    const { useSettingsStore } = await import("../stores/settings");
+    const settings = useSettingsStore();
+    settings.lastHub = "/old/hub";
     mocks.confirm.mockResolvedValue(true);
     hubButton().click();
-    await vi.waitFor(() => expect(mocks.navigate).toHaveBeenCalledWith("startup"));
+    await vi.waitFor(() => {
+      expect(mocks.navigate).toHaveBeenCalledWith("startup");
+      expect(settings.lastHub).toBe("");
+    });
     expect(mocks.navigate).toHaveBeenCalledTimes(1);
   });
 
