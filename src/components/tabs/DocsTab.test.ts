@@ -17,7 +17,9 @@ const mocks = vi.hoisted(() => ({
   replayOutput: vi.fn<(runId: number) => Promise<void>>(),
   openInFinder: vi.fn<(path: string) => Promise<void>>(),
   openInTerminal: vi.fn<(path: string, terminal: string | null) => Promise<void>>(),
-  readTextFile: vi.fn<(path: string) => Promise<string>>(),
+  // 点文档名用系统默认应用打开（Rust open_path）；复制改走 Rust copy_text（pasteboard 直写）
+  openPath: vi.fn<(path: string) => Promise<void>>(),
+  copyText: vi.fn<(text: string) => Promise<void>>(),
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
   /** 按事件名保存 listen 注册的 handler，测试中手动触发以模拟 gws-exit 事件 */
   handlers: new Map<string, Handler>(),
@@ -31,7 +33,8 @@ vi.mock("../../lib/gws-bridge", () => ({
   replayOutput: mocks.replayOutput,
   openInFinder: mocks.openInFinder,
   openInTerminal: mocks.openInTerminal,
-  readTextFile: mocks.readTextFile,
+  openPath: mocks.openPath,
+  copyText: mocks.copyText,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -48,17 +51,12 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   confirm: mocks.confirm,
 }));
 
-vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
-  writeText: vi.fn(),
-}));
-
 vi.mock("@tauri-apps/plugin-store", () => ({
   load: vi.fn(),
   Store: class Store {},
 }));
 
 import { useHubStore } from "../../stores/hub";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import DocsTab, { HUB_ROOT } from "./DocsTab.vue";
 
 let app: App | null = null;
@@ -122,7 +120,7 @@ function clickButton(text: string) {
   btn.click();
 }
 
-/** 点击表格「文档」列的文件名链接按钮（打开查看器） */
+/** 点击表格「文档」列的文件名链接按钮（交给系统默认应用打开） */
 function fileButton(name: string): HTMLButtonElement {
   const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
     .find((b) => b.textContent?.trim() === name);
@@ -150,7 +148,8 @@ beforeEach(() => {
   mocks.runGws.mockResolvedValue({ code: 0, output: "" });
   mocks.replayOutput.mockResolvedValue(undefined);
   mocks.confirm.mockResolvedValue(true);
-  mocks.readTextFile.mockResolvedValue("# 文档内容\n\n正文");
+  mocks.openPath.mockResolvedValue(undefined);
+  mocks.copyText.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -397,74 +396,66 @@ describe("DocsTab Hub 根文档源", () => {
   });
 });
 
-describe("DocsTab 文档查看", () => {
-  it("ws 模式点击文件名：readTextFile 于 docs/<docdir>/<file>（与文件复制路径一致），弹窗展示内容；点 mask 关闭", async () => {
+describe("DocsTab 打开文档（系统默认应用）", () => {
+  it("ws 模式点击文件名：openPath 于 docs/<docdir>/<file>（与文件复制路径一致），不再读内容弹查看器", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mocks.readTextFile.mockResolvedValue("# 技术方案\n\n正文内容");
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
 
+    // title 交代新交互语义：交给系统默认应用（如 Typora/VS Code）
+    expect(fileButton("技术方案.md").title).toBe("用系统默认应用打开");
     fileButton("技术方案.md").click();
     await vi.waitFor(() =>
-      expect(mocks.readTextFile).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp/技术方案.md"),
+      expect(mocks.openPath).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp/技术方案.md"),
     );
-    await vi.waitFor(() => expect(el!.querySelector(".mask")).toBeTruthy());
-    const mask = el!.querySelector(".mask")!;
-    expect(mask.textContent).toContain("技术方案.md"); // 标题文件名
-    expect(mask.textContent).toContain("/hub/docs/2026-08-18-checkout-revamp/技术方案.md"); // muted 路径
-    expect(el!.querySelector("pre")!.textContent).toContain("# 技术方案\n\n正文内容");
-
-    el!.querySelector<HTMLElement>(".mask")!.click(); // 只读查看器：点 mask 即关
-    await nextTick();
+    // 内置查看器（DocViewerDialog）已删：无弹窗、只调一次系统打开
+    expect(mocks.openPath).toHaveBeenCalledTimes(1);
     expect(el!.querySelector(".mask")).toBeNull();
-    expect(mocks.readTextFile).toHaveBeenCalledTimes(1); // 关闭不重读
   });
 
-  it("hub 模式点击文件名：readTextFile 于 docs/<file>（无 docdir 层），弹窗展示内容", async () => {
+  it("hub 模式点击文件名：openPath 于 docs/<file>（无 docdir 层）", async () => {
     mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() });
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut([["README.md", "999"]]) });
-    mocks.readTextFile.mockResolvedValue("# Hub README\n\n说明");
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
     switchWs(HUB_ROOT);
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(1));
 
     fileButton("README.md").click();
-    await vi.waitFor(() => expect(mocks.readTextFile).toHaveBeenCalledWith("/hub/docs/README.md"));
-    await vi.waitFor(() => expect(el!.querySelector(".mask")).toBeTruthy());
-    expect(el!.querySelector("pre")!.textContent).toContain("# Hub README\n\n说明");
+    await vi.waitFor(() => expect(mocks.openPath).toHaveBeenCalledWith("/hub/docs/README.md"));
+    expect(el!.querySelector(".mask")).toBeNull();
   });
 
-  it("读取失败：错误进 err 展示位（含重试），弹窗不出现", async () => {
+  it("打开失败：openPath reject → err = String(e) 进错误行（含重试），不崩", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mocks.readTextFile.mockRejectedValue("读取文件失败 /hub/docs/技术方案.md: no such file");
+    mocks.openPath.mockRejectedValueOnce("打开文件失败 /hub/docs/2026-08-18-checkout-revamp/技术方案.md: no such file");
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
 
     fileButton("技术方案.md").click();
-    await vi.waitFor(() => expect(el!.textContent).toContain("读取文件失败 /hub/docs/技术方案.md: no such file"));
-    expect(el!.querySelector(".mask")).toBeNull();
+    await vi.waitFor(() =>
+      expect(el!.textContent).toContain("打开文件失败 /hub/docs/2026-08-18-checkout-revamp/技术方案.md: no such file"),
+    );
     expect(el!.querySelector(".error")).toBeTruthy();
   });
 
-  it("读取在途：该行文件按钮禁用，patch 滞后窗口内的第二击被 reading 守卫拦截；完成后恢复且弹窗出现", async () => {
+  it("打开在途：全部行文件按钮禁用，patch 滞后窗口内的第二击被 opening 守卫拦截；完成后恢复可点", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    let release!: (v: string) => void;
-    mocks.readTextFile.mockImplementation(() => new Promise<string>((r) => (release = r)));
+    let release!: () => void;
+    mocks.openPath.mockImplementation(() => new Promise<void>((r) => (release = r)));
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
 
     fileButton("技术方案.md").click();
-    fileButton("技术方案.md").click(); // Vue 未及重渲染禁用按钮，第二击靠 reading 守卫拦截
+    fileButton("技术方案.md").click(); // Vue 未及重渲染禁用按钮，第二击靠 opening 守卫拦截
     await new Promise((r) => setTimeout(r, 0));
-    expect(mocks.readTextFile).toHaveBeenCalledTimes(1);
+    expect(mocks.openPath).toHaveBeenCalledTimes(1);
     await nextTick();
     expect(fileButton("技术方案.md").disabled).toBe(true);
-    expect(fileButton("排期.md").disabled).toBe(true); // 在途读取禁全部行（跨行也禁）
+    expect(fileButton("排期.md").disabled).toBe(true); // 在途打开禁全部行（系统调起无上界，跨行也禁）
 
-    release("# 内容");
-    await vi.waitFor(() => expect(el!.querySelector(".mask")).toBeTruthy());
-    expect(fileButton("技术方案.md").disabled).toBe(false); // 读取完成恢复可点
+    release();
+    await vi.waitFor(() => expect(fileButton("技术方案.md").disabled).toBe(false)); // 打开完成恢复可点
     expect(fileButton("排期.md").disabled).toBe(false);
   });
 });
@@ -643,7 +634,7 @@ describe("DocsTab 目录行与文件复制", () => {
     expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp");
     dirButton("复制路径").click();
     await vi.waitFor(() =>
-      expect(vi.mocked(writeText)).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp"),
+      expect(mocks.copyText).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp"),
     );
   });
 
@@ -659,16 +650,16 @@ describe("DocsTab 目录行与文件复制", () => {
     );
 
     dirButton("复制路径").click();
-    await vi.waitFor(() => expect(vi.mocked(writeText)).toHaveBeenCalledWith("/hub/docs"));
+    await vi.waitFor(() => expect(mocks.copyText).toHaveBeenCalledWith("/hub/docs"));
 
     // 文件复制（hub 文件在 docs/ 第一层，无 docdir）
     el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!
       .querySelector<HTMLButtonElement>('button[title="复制文件路径"]')!
       .click();
-    await vi.waitFor(() => expect(vi.mocked(writeText)).toHaveBeenCalledWith("/hub/docs/README.md"));
+    await vi.waitFor(() => expect(mocks.copyText).toHaveBeenCalledWith("/hub/docs/README.md"));
   });
 
-  it("文件行复制按钮：writeText 带文件全路径（ws 模式含 docdir 层）", async () => {
+  it("文件行复制按钮：copyText 带文件全路径（ws 模式含 docdir 层）", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
@@ -677,7 +668,7 @@ describe("DocsTab 目录行与文件复制", () => {
       .querySelector<HTMLButtonElement>('button[title="复制文件路径"]')!
       .click();
     await vi.waitFor(() =>
-      expect(vi.mocked(writeText)).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp/技术方案.md"),
+      expect(mocks.copyText).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp/技术方案.md"),
     );
   });
 

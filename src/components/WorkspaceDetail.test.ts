@@ -171,17 +171,22 @@ async function mountReady() {
 }
 
 describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
-  it("doCmd 走 execDialog：默认 confirmTimeoutMs=30000（慢命令防假确认）", async () => {
+  it("doCmd 走 execDialog：默认 confirmTimeoutMs=30000（慢命令防假确认）；Pull 系已改走 confirm，用 Done 校验触发纯 doCmd", async () => {
     await mountReady();
-    clickText("Pull");
+    clickText("Done 校验");
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["pull"], "/hub/ws/demo", 30000),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["done"], "/hub/ws/demo", 30000),
     );
   });
 
-  it("gws drop 单独传 confirmTimeoutMs=1500（GUI 下唯一真读 stdin 的命令）", async () => {
+  it("gws drop 先原生 confirm，确认后单独传 confirmTimeoutMs=1500（GUI 下唯一真读 stdin 的命令）", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(true);
     await mountReady();
     clickText("移除");
+    await vi.waitFor(() =>
+      expect(confirm).toHaveBeenCalledWith("确认移除模块 order-service？（未推送提交时 gws 会再次确认是否丢弃）"),
+    );
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["drop", "order-service"], "/hub/ws/demo", 1500),
     );
@@ -198,8 +203,8 @@ describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
   });
 });
 
-describe("WorkspaceDetail Push / Merge 前确认（破坏性操作防误点）", () => {
-  it("Push：confirm 取消 → 不执行命令；Pull 等读侧操作不经 confirm", async () => {
+describe("WorkspaceDetail 写操作前确认（Pull/Push/Merge 系列统一 confirmThenDo）", () => {
+  it("Push：confirm 取消 → 不执行命令；Pull 同为写操作（更新本地），取消同样不执行、确认后执行", async () => {
     const { confirm } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(confirm).mockResolvedValue(false);
     await mountReady();
@@ -210,12 +215,36 @@ describe("WorkspaceDetail Push / Merge 前确认（破坏性操作防误点）",
     expect(mocks.runGwsStream).not.toHaveBeenCalled();
     // 确认弹窗文案带上当前分支
     expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("feature-20260818-checkout-revamp");
-    // 对照：Pull 不弹确认、直接执行
+    // Pull 不再是读侧直通：亦经 confirm，取消 → 不执行
+    clickText("Pull");
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(confirm).mock.calls[1]![0]).toContain("确认拉取远程更新到当前分支");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+    // 确认 → 执行 gws pull（默认 30000）
+    vi.mocked(confirm).mockResolvedValue(true);
     clickText("Pull");
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["pull"], "/hub/ws/demo", 30000),
     );
-    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("Pull --rebase 亦经 confirm：取消不执行；确认后 pull --rebase（默认 30000）", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(false);
+    await mountReady();
+    clickText("Pull --rebase");
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    // 文案警示变基后果（本地未推送提交会被变基）
+    expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("确认以 rebase 方式拉取远程更新");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+
+    vi.mocked(confirm).mockResolvedValue(true);
+    clickText("Pull --rebase");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["pull", "--rebase"], "/hub/ws/demo", 30000),
+    );
   });
 
   it("Push：confirm 确认 → 执行 gws push（默认 30000）", async () => {
@@ -377,6 +406,8 @@ describe("WorkspaceDetail 头部刷新按钮", () => {
   });
 
   it("命令运行中刷新按钮禁用（本文件 listen mock 为 no-op，无法模拟 exit，恢复半程不在此验证）", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(true); // Pull 已改走 confirmThenDo：先过原生确认才 exec
     await mountReady();
     clickText("Pull");
     await vi.waitFor(() =>

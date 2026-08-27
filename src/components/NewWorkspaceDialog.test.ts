@@ -44,11 +44,16 @@ let nextId = 0;
 /** emit 顺序探针：created 必须先于 close（父组件先刷新列表再卸载弹窗） */
 const events: string[] = [];
 
+/** 挂载弹窗（预置两个候选模块：模块必选后，创建用例须先勾选才能点创建） */
 function mountDialog() {
   const pinia = createPinia();
   setActivePinia(pinia);
   const hub = useHubStore();
   hub.setHub("/hub");
+  hub.repos = [
+    { name: "order-service", mainBranch: "main" },
+    { name: "user-web", mainBranch: "main" },
+  ];
   el = document.createElement("div");
   document.body.appendChild(el);
   events.length = 0;
@@ -60,9 +65,29 @@ function mountDialog() {
   app.mount(el);
 }
 
-/** 第 idx 个文本输入框（0=名称） */
+/** 第 idx 个文本输入框（0=名称，序：名称/标题/自定义分支/基线来源；名称随 customBranch 隐藏会漂移） */
 function setInput(idx: number, value: string) {
   const input = el!.querySelectorAll<HTMLInputElement>("input")[idx]!;
+  input.value = value;
+  input.dispatchEvent(new Event("input"));
+}
+
+/** 勾选模块复选框（checkbox v-model 监听 change 事件）；两次勾选之间须等 patch：
+ *  数组型 checkbox 的 change 处理器基于旧数组计算，同步连发会让后一次覆盖前一次的勾选
+ *  （模式同 AddModuleDialog.test.ts 的 checkAll） */
+async function checkModule(name: string) {
+  const box = Array.from(el!.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+    .find((i) => i.value === name);
+  if (!box) throw new Error(`模块「${name}」复选框未找到`);
+  box.checked = true;
+  box.dispatchEvent(new Event("change"));
+  await nextTick();
+}
+
+/** 基线来源输入框填值（按 placeholder 定位：名称输入框随 customBranch 隐藏后索引会漂移） */
+function setFrom(value: string) {
+  const input = Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
+    .find((i) => i.placeholder.includes("留空=主干"))!;
   input.value = value;
   input.dispatchEvent(new Event("input"));
 }
@@ -107,21 +132,25 @@ describe("NewWorkspaceDialog", () => {
     expect(placeholder).toContain("前缀-日期-名称");
   });
 
-  it("创建按钮在名称为空时禁用（gws new 名称是必填位置参数）", () => {
+  it("创建按钮在名称为空或未勾选模块时禁用（名称与模块均必填，模块不再有「不选=全部仓库」语义）", async () => {
     mountDialog();
     const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "创建")!;
-    expect(btn.disabled).toBe(true);
+    expect(btn.disabled).toBe(true); // 名称空 + 未选模块
     setInput(0, "demo");
-    return vi.waitFor(() => expect(btn.disabled).toBe(false));
+    await nextTick();
+    expect(btn.disabled).toBe(true); // 模块必选：仅填名称仍禁用
+    await checkModule("order-service");
+    await vi.waitFor(() => expect(btn.disabled).toBe(false));
   });
 
   it("命令成功（exit 0）：created 先于 close 通知（父组件先刷新列表再卸载弹窗）", async () => {
     mountDialog();
     setInput(0, "demo");
+    await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo"], "/hub", 30000),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--modules", "order-service"], "/hub", 30000),
     );
     await exitWith(1, 0);
     await vi.waitFor(() => expect(events).toEqual(["created", "close"]));
@@ -130,6 +159,7 @@ describe("NewWorkspaceDialog", () => {
   it("命令失败（exit 1）：不 emit created/close，弹窗保留输入便于重试", async () => {
     mountDialog();
     setInput(0, "demo");
+    await checkModule("order-service");
     await clickCreate();
     await exitWith(1, 1);
     // 等若干拍确认无任何 emit（waitDone 已决议、组件仍挂载）
@@ -145,6 +175,7 @@ describe("NewWorkspaceDialog", () => {
     mountDialog();
     mocks.runGwsStream.mockRejectedValueOnce(new Error("gws 未安装"));
     setInput(0, "demo");
+    await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() => expect(el!.textContent).toContain("gws 未安装"));
     expect(events).toEqual([]);
@@ -154,6 +185,7 @@ describe("NewWorkspaceDialog", () => {
   it("submitting 期间点 mask/取消不关窗（防 IPC 间隙卸载致 created 通知丢失）", async () => {
     mountDialog();
     setInput(0, "demo");
+    await checkModule("order-service");
     await clickCreate();
     // 命令在途（无 exit 事件 → waitDone 挂起、submitting=true）：
     // 此窗口内一次 mask 点击/取消即可卸载组件，终态后 emit("created") 变 no-op
@@ -168,13 +200,15 @@ describe("NewWorkspaceDialog", () => {
     expect(el!.querySelector(".dialog")).toBeTruthy();
   });
 
-  it("参数拼装：模块/标题/前缀/自定义分支按需附加", async () => {
+  it("参数拼装：--modules 恒传（模块必选，多模块逗号 join），标题/前缀/自定义分支按需附加", async () => {
     mountDialog();
     setInput(0, "demo");
     setInput(1, "结算改版"); // 标题
     // 自定义分支名命中 <前缀>-日期-<名称> 模式（文本输入序：名称/标题/自定义分支），
     // 名称随分支名反推为 demo（与手填一致）
     setInput(2, "feature-20260827-demo");
+    await checkModule("order-service");
+    await checkModule("user-web"); // join 顺序即勾选顺序
     // 前缀切 hotfix
     const select = el!.querySelector<HTMLSelectElement>("select")!;
     select.value = "hotfix";
@@ -182,7 +216,7 @@ describe("NewWorkspaceDialog", () => {
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "demo", "--title", "结算改版", "--prefix", "hotfix", "--branch", "feature-20260827-demo"],
+        ["new", "demo", "--modules", "order-service,user-web", "--title", "结算改版", "--prefix", "hotfix", "--branch", "feature-20260827-demo"],
         "/hub",
         30000,
       ),
@@ -204,12 +238,57 @@ describe("NewWorkspaceDialog", () => {
   it("前缀 bugfix 提交：非默认前缀传 --prefix bugfix（gws 侧接受任意纯字母前缀）", async () => {
     mountDialog();
     setInput(0, "demo");
+    await checkModule("order-service");
     const select = el!.querySelector<HTMLSelectElement>("select")!;
     select.value = "bugfix";
     select.dispatchEvent(new Event("change"));
     await clickCreate();
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--prefix", "bugfix"], "/hub", 30000),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "demo", "--modules", "order-service", "--prefix", "bugfix"],
+        "/hub",
+        30000,
+      ),
+    );
+  });
+});
+
+describe("NewWorkspaceDialog 基线来源（--from）", () => {
+  it("留空不传：args 无 --from（gws 默认走创建时基线，主干兜底）", async () => {
+    mountDialog();
+    setInput(0, "demo");
+    await checkModule("order-service");
+    await clickCreate();
+    // 精确数组断言：--from 不出现（--from 仅在有输入时附加）
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--modules", "order-service"], "/hub", 30000),
+    );
+  });
+
+  it("多值解析：空格与逗号分隔均归一为逗号 join（顺序即优先级），位置在 --modules 之后", async () => {
+    mountDialog();
+    setInput(0, "demo");
+    await checkModule("order-service");
+    setFrom("需求A 阶段2"); // 空格分隔两个基线
+    await clickCreate();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "demo", "--modules", "order-service", "--from", "需求A,阶段2"],
+        "/hub",
+        30000,
+      ),
+    );
+
+    // 逗号分隔输入归一结果相同：先等首条命令终态（submitting 归零）再发起第二次创建
+    await exitWith(1, 0);
+    setFrom("需求A,阶段2");
+    await clickCreate();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "demo", "--modules", "order-service", "--from", "需求A,阶段2"],
+        "/hub",
+        30000,
+      ),
     );
   });
 });
@@ -235,11 +314,12 @@ describe("NewWorkspaceDialog 自定义分支名反推名称（用户反馈 #5）
     await nextTick();
     expect(nameInput()).toBeNull(); // 名称输入框被 v-if 卸载
     expect(el!.textContent).toContain("名称将从分支名反推：abc");
-    // 名称未手填也可创建（分支名已含名称信息，按钮不再依赖名称输入）
+    // 名称未手填也可创建（分支名已含名称信息，按钮不再依赖名称输入；模块仍须勾选）
+    await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "abc", "--branch", "feature-20260827-abc"],
+        ["new", "abc", "--modules", "order-service", "--branch", "feature-20260827-abc"],
         "/hub",
         30000,
       ),
@@ -252,10 +332,11 @@ describe("NewWorkspaceDialog 自定义分支名反推名称（用户反馈 #5）
     await nextTick();
     expect(nameInput()).toBeNull();
     expect(el!.textContent).toContain("名称将从分支名反推：mybranch");
+    await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "mybranch", "--branch", "mybranch"],
+        ["new", "mybranch", "--modules", "order-service", "--branch", "mybranch"],
         "/hub",
         30000,
       ),
@@ -272,9 +353,10 @@ describe("NewWorkspaceDialog 自定义分支名反推名称（用户反馈 #5）
     expect(nameInput()).toBeTruthy();
     expect(el!.textContent).not.toContain("名称将从分支名反推");
     setInput(0, "demo");
+    await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo"], "/hub", 30000),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--modules", "order-service"], "/hub", 30000),
     );
   });
 });

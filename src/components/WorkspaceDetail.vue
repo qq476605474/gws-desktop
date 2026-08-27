@@ -60,7 +60,7 @@ async function doCmd(label: string, args: string[], opts: ExecOpts = {}) {
  *  连点两次“确定”则命令执行两次；此时 run 尚未启动、isRunning 不生效，须本地 ref 拦截 */
 const confirming = ref(false);
 /** Push / Merge 系列为破坏性操作（写远程、合并分支，误点难撤销）：先原生确认再执行，读侧操作不加确认 */
-async function confirmThenDo(label: string, args: string[], question: string) {
+async function confirmThenDo(label: string, args: string[], question: string, opts: ExecOpts = {}) {
   if (confirming.value) return;
   confirming.value = true;
   try {
@@ -72,7 +72,7 @@ async function confirmThenDo(label: string, args: string[], question: string) {
     }
     if (!ok) return;
     if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令（同 EnvsTab.rmEnv）
-    await doCmd(label, args);
+    await doCmd(label, args, opts);
   } finally {
     confirming.value = false;
   }
@@ -125,8 +125,9 @@ onMounted(refresh);
       <button :disabled="cmd.isRunning()" @click="refresh" title="重新加载 gws st">刷新</button>
     </header>
     <div class="ops">
-      <button :disabled="cmd.isRunning()" @click="doCmd('gws pull', ['pull'])">Pull</button>
-      <button :disabled="cmd.isRunning()" @click="doCmd('gws pull --rebase', ['pull', '--rebase'])">Pull --rebase</button>
+      <!-- Pull/Push 系列均为写操作（更新本地/远程）：统一 confirmThenDo 防误点 -->
+      <button :disabled="cmd.isRunning()" @click="confirmThenDo('gws pull', ['pull'], `确认拉取远程更新到当前分支？`)">Pull</button>
+      <button :disabled="cmd.isRunning()" @click="confirmThenDo('gws pull --rebase', ['pull', '--rebase'], `确认以 rebase 方式拉取远程更新？（本地未推送提交会被变基）`)">Pull --rebase</button>
       <!-- push 写远程：先确认（st 未就绪时分支名回退为“当前分支”） -->
       <button :disabled="cmd.isRunning()" @click="confirmThenDo('gws push', ['push'], `确认推送 ${st?.branch ?? '当前分支'} 到远程？`)">Push</button>
       <select v-model="mergeEnv">
@@ -154,8 +155,9 @@ onMounted(refresh);
           <td :class="{ warn: (m.dirty ?? 0) > 0 }">{{ m.missing ? "目录缺失" : m.dirty }}</td>
           <td>{{ m.pushed === false ? "未推送" : `↑${m.ahead ?? 0} ↓${m.behind ?? 0}` }}</td>
           <td>+{{ m.aheadOfMain ?? "?" }}</td>
-          <!-- gws drop 是 GUI 下唯一真读 stdin 的命令：保持默认 1.5s 确认超时（其余命令 30s 防假确认） -->
-          <td><button class="btn-sm" :disabled="cmd.isRunning()" @click="doCmd(`gws drop ${m.name}`, ['drop', m.name], { confirmTimeoutMs: 1500 })">移除</button></td>
+          <!-- gws drop 是 GUI 下唯一真读 stdin 的命令：前端先原生确认防误点（用户反馈），
+               确认后仍保持 1.5s 默认超时——模块有领先提交时 gws 会真 read stdin 二次确认 -->
+          <td><button class="btn-sm" :disabled="cmd.isRunning()" @click="confirmThenDo(`gws drop ${m.name}`, ['drop', m.name], `确认移除模块 ${m.name}？（未推送提交时 gws 会再次确认是否丢弃）`, { confirmTimeoutMs: 1500 })">移除</button></td>
         </tr>
       </tbody>
     </table>
@@ -170,6 +172,8 @@ onMounted(refresh);
 .detail { padding: 4px 0; }
 .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .ops { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; align-items: center; }
+/* 环境下拉收窄：全局 select 是 100%/320px 输入体系，在按钮行里过宽（环境名短） */
+.ops select { width: auto; max-width: none; flex: 0 0 auto; }
 /* table/th/td 基础样式全局化（base.css） */
 .warn { color: var(--warn-text); font-weight: 600; }
 .error { color: var(--danger-text); font-size: 13px; margin: 0 0 12px; }

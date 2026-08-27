@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use tauri::AppHandle;
+use tauri_plugin_clipboard_manager::ClipboardExt;
+
 const DEFAULT_GWS_UPDATE_URL: &str = "https://raw.githubusercontent.com/qq476605474/gws/main/gws";
 
 #[derive(Debug, Clone, PartialEq)]
@@ -94,6 +97,36 @@ pub fn open_in_finder(path: String) -> Result<(), String> {
         return Err("不支持的平台".to_string());
     };
     run_status(Command::new(program).arg(&path), "打开目录失败")
+}
+
+/// 用系统默认应用打开任意路径：目录→文件管理器，文件→关联应用（区别于
+/// open_in_finder 的 explorer：Windows 下后者对文件只会在资源管理器中选中）。
+#[tauri::command(async)]
+pub fn open_path(path: String) -> Result<(), String> {
+    let mut cmd = if cfg!(target_os = "macos") {
+        Command::new("open")
+    } else if cfg!(target_os = "linux") {
+        Command::new("xdg-open")
+    } else if cfg!(target_os = "windows") {
+        // start 是 cmd 内建而非可执行文件，须经 cmd /C；空 "" 是 start 的窗口标题占位，
+        // 否则带引号的路径首段会被当成标题吞掉
+        let mut c = Command::new("cmd");
+        c.args(["/C", "start", ""]);
+        c
+    } else {
+        return Err("不支持的平台".to_string());
+    };
+    cmd.arg(&path);
+    run_status(&mut cmd, "打开失败")
+}
+
+/// 写系统剪贴板。走 Rust 侧而非 JS 插件 API：WKWebView 的 JS 剪贴板层
+/// 在部分环境静默失效（点击无反应且无错误可见），Rust 直写 pasteboard 稳定。
+#[tauri::command(async)]
+pub fn copy_text(text: String, app: AppHandle) -> Result<(), String> {
+    app.clipboard()
+        .write_text(text)
+        .map_err(|e| format!("复制失败: {e}"))
 }
 
 /// 第一层（shell）：路径包成单引号 token，形如 'it'\''s'。

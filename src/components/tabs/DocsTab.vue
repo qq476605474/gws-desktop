@@ -7,14 +7,12 @@ export const HUB_ROOT = "__hub__";
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { confirm } from "@tauri-apps/plugin-dialog";
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
-import { runGws, readTextFile } from "../../lib/gws-bridge";
+import { runGws, openPath, copyText } from "../../lib/gws-bridge";
 import { stripAnsi } from "../../lib/ansi";
 import { parseDocDir, parseDocLs, parseLs, type DocEntry } from "../../lib/parse";
 import PathActions from "../PathActions.vue";
-import DocViewerDialog from "../DocViewerDialog.vue";
 
 const hub = useHubStore();
 const cmd = useCmdStore();
@@ -28,10 +26,7 @@ const docDir = ref("");
 const err = ref("");
 const submitting = ref(false);
 const loading = ref(false);
-const reading = ref(""); // 正在读取内容的文件名：读取期间禁用所有 doc-link 防重入/跨行点击
-// viewer 内容是打开瞬间的快照，refresh 从不重置它——弹窗 mask 盖全屏时 select 不可达，
-// 无"切源后旧内容"路径；头部显示完整路径，内容自描述
-const viewer = ref<{ fileName: string; path: string; content: string } | null>(null);
+const opening = ref(""); // 正在交给系统打开的文件名：读取期间禁用所有 doc-link 防重入/跨行点击
 const isHubData = computed(() => docsWs.value === HUB_ROOT);
 /** 文档目录（目录级访达/终端/复制的落点）：ws 模式 docs/<docdir>，hub 模式 docs/。
  *  空串 = 无数据归属（未加载/无工作区），目录行不渲染 */
@@ -184,21 +179,19 @@ async function commit() {
 /** 文件级操作只留“复制路径”：📂 对文件是打开文件（非预期）、💻 终端对文件无意义；
  *  访达/终端是目录级操作，收敛到上方文档目录行（用户反馈 #10） */
 async function copyFile(file: string) {
-  await writeText(filePath(file));
+  await copyText(filePath(file));
 }
 
-async function openViewer(d: DocEntry) {
-  if (reading.value) return; // 双击守卫：patch 滞后窗口内的第二击由此拦截
-  reading.value = d.file;
+/** 点文档名 → 系统默认应用打开（如 Typora/VS Code）：自带查看器界面简陋，弃用 */
+async function openDoc(d: DocEntry) {
+  if (opening.value) return; // 双击守卫：patch 滞后窗口内的第二击由此拦截
+  opening.value = d.file;
   try {
-    const path = filePath(d.file);
-    const content = await readTextFile(path);
-    viewer.value = { fileName: d.file, path, content };
+    await openPath(filePath(d.file));
   } catch (e) {
-    // 读取失败（文件被移走/权限/超大等）：错误进既有展示位，弹窗不出现
     err.value = String(e);
   } finally {
-    reading.value = "";
+    opening.value = "";
   }
 }
 
@@ -230,8 +223,8 @@ onMounted(refresh);
       <tbody>
         <tr v-for="d in docs" :key="d.file">
           <td>
-            <!-- 在途读取禁全部行（窗口无上界——网络盘/大文件），不止被点的那行 -->
-            <button class="doc-link" title="查看文档" :disabled="!!reading" @click="openViewer(d)">{{ d.file }}</button>
+            <!-- 在途打开禁全部行：系统调起窗口无上界（网络盘/大文件），不止被点的那行 -->
+            <button class="doc-link" title="用系统默认应用打开" :disabled="!!opening" @click="openDoc(d)">{{ d.file }}</button>
           </td>
           <td>{{ d.synced ? `● 已同步 (wiki:${d.pageId})` : "○ 未上传" }}</td>
           <td>
@@ -246,7 +239,6 @@ onMounted(refresh);
     <p v-else-if="!err && !hub.error && loading" class="muted">加载中…</p>
     <p v-else-if="!err && !hub.error" class="muted">{{ isHubData ? "（暂无文档）" : "（暂无文档——在当前工作区 gws doc new 创建）" }}</p>
     <p class="muted">上传依赖 GWS_DOC_UPLOADER 指向的脚本（未配置时 gws 会提示）。doc push 的输出见命令弹窗。</p>
-    <DocViewerDialog v-if="viewer" :file-name="viewer.fileName" :path="viewer.path" :content="viewer.content" @close="viewer = null" />
   </div>
 </template>
 

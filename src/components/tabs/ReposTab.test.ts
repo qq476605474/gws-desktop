@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   replayOutput: vi.fn<(runId: number) => Promise<void>>(),
   openInFinder: vi.fn<(path: string) => Promise<void>>(),
   openInTerminal: vi.fn<(path: string, terminal: string | null) => Promise<void>>(),
+  openPath: vi.fn<(path: string) => Promise<void>>(),
+  copyText: vi.fn<(text: string) => Promise<void>>(),
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
   /** 按事件名保存 listen 注册的 handler，测试中手动触发以模拟 gws-exit 事件 */
   handlers: new Map<string, Handler>(),
@@ -30,6 +32,8 @@ vi.mock("../../lib/gws-bridge", () => ({
   replayOutput: mocks.replayOutput,
   openInFinder: mocks.openInFinder,
   openInTerminal: mocks.openInTerminal,
+  openPath: mocks.openPath,
+  copyText: mocks.copyText,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -44,10 +48,6 @@ vi.mock("@tauri-apps/api/event", () => ({
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   confirm: mocks.confirm,
-}));
-
-vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
-  writeText: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-store", () => ({

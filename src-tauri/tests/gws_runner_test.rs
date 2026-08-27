@@ -309,7 +309,7 @@ fn stream_e2e_confirm_kill() {
     let question = wait_until("confirm 事件", Duration::from_secs(5), || {
         log.lock().unwrap().confirm.clone()
     });
-    assert!(question.contains("等待确认"), "question: {question}");
+    assert!(question.contains("可能正在等待输入"), "question: {question}");
     assert!(question.contains("1.5s"), "默认超时文案应含 1.5s: {question}");
 
     // 拒绝 → 后端 kill 子进程
@@ -373,7 +373,7 @@ fn stream_e2e_short_custom_timeout_fires_confirm() {
     let question = wait_until("confirm 事件", Duration::from_secs(5), || {
         log.lock().unwrap().confirm.clone()
     });
-    assert!(question.contains("等待确认"), "question: {question}");
+    assert!(question.contains("可能正在等待输入"), "question: {question}");
     assert!(question.contains("0.25s"), "超时文案应为 clamp 后的 0.25s: {question}");
 
     // 进程未被杀：自然退出 code 0（confirm 只是提示，不影响运行）

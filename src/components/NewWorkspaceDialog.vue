@@ -12,6 +12,7 @@ const title = ref("");
 const modules = ref<string[]>([]);
 const prefix = ref("feature");
 const customBranch = ref("");
+const fromInput = ref("");
 const err = ref("");
 const submitting = ref(false);
 
@@ -25,6 +26,8 @@ const derivedName = computed(() => {
   const branch = customBranch.value.trim();
   return branch ? deriveName(branch) : "";
 });
+/** 基线来源（--from）：空格或逗号分隔可填多个，顺序即优先级（主干自动兜底） */
+const froms = computed(() => fromInput.value.split(/[\s,]+/).filter(Boolean));
 
 async function create() {
   if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
@@ -32,7 +35,9 @@ async function create() {
   const branch = customBranch.value.trim();
   const name = branch ? derivedName.value : nameInput.value.trim();
   const args = ["new", name];
-  if (modules.value.length) args.push("--modules", modules.value.join(","));
+  // 模块必选（不选=全部仓库的语义在 GUI 下容易误建超大工作区）
+  args.push("--modules", modules.value.join(","));
+  if (froms.value.length) args.push("--from", froms.value.join(","));
   if (title.value) args.push("--title", title.value);
   if (prefix.value !== "feature") args.push("--prefix", prefix.value);
   if (branch) args.push("--branch", branch);
@@ -78,8 +83,10 @@ async function create() {
         </select>
       </label>
       <label>完全自定义分支名 <input v-model="customBranch" autocapitalize="off" spellcheck="false" placeholder="留空则用前缀-日期-名称" /></label>
+      <!-- gws new --from 基线[,基线]...：可多次/逗号分隔，顺序即优先级，主干自动兜底 -->
+      <label>基线来源 <input v-model="fromInput" autocapitalize="off" spellcheck="false" placeholder="可选，如 需求A 阶段2（空格/逗号分隔多个，留空=主干）" /></label>
       <fieldset>
-        <legend>模块（不选=全部仓库）</legend>
+        <legend>模块（必选）</legend>
         <label v-for="r in hub.repos" :key="r.name">
           <input type="checkbox" :value="r.name" v-model="modules" /> {{ r.name }}
         </label>
@@ -87,7 +94,7 @@ async function create() {
       <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">
         <button :disabled="submitting" @click="emit('close')">取消</button>
-        <button class="primary" :disabled="!(derivedName || nameInput.trim()) || submitting" @click="create">创建</button>
+        <button class="primary" :disabled="!(derivedName || nameInput.trim()) || !modules.length || submitting" @click="create">创建</button>
       </div>
     </div>
   </div>

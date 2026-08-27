@@ -53,6 +53,14 @@ export function listDir(path: string): Promise<string[]> {
 export function openInFinder(path: string): Promise<void> {
   return invoke("open_in_finder", { path });
 }
+/** 用系统默认应用打开任意路径：目录→文件管理器，文件→关联应用（如 .md 的编辑器）。 */
+export function openPath(path: string): Promise<void> {
+  return invoke("open_path", { path });
+}
+/** 写系统剪贴板。Rust 侧直写 pasteboard：WKWebView 的 JS 剪贴板层在部分环境静默失效。 */
+export function copyText(text: string): Promise<void> {
+  return invoke("copy_text", { text });
+}
 /** terminal 传 null 表示跟随系统（Rust 侧自动检测 iTerm2/Terminal.app）。 */
 export function openInTerminal(path: string, terminal: string | null): Promise<void> {
   return invoke("open_in_terminal", { path, terminal });

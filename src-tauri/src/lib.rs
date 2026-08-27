@@ -15,6 +15,8 @@ pub fn run() {
             gws_runner::replay_output,
             shell::open_in_finder,
             shell::open_in_terminal,
+            shell::open_path,
+            shell::copy_text,
             shell::check_gws_installed,
             shell::latest_gws_version,
             shell::hub_exists,

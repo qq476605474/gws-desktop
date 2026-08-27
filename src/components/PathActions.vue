@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { openInFinder, openInTerminal } from "../lib/gws-bridge";
+import { openInFinder, openInTerminal, copyText } from "../lib/gws-bridge";
 import { useSettingsStore } from "../stores/settings";
 
 const props = defineProps<{ path: string }>();
 const settings = useSettingsStore();
-async function copy() { await writeText(props.path); }
+async function copy() { await copyText(props.path); }
 async function finder() { await openInFinder(props.path); }
 async function terminal() {
   await openInTerminal(props.path, settings.terminal === "system" ? null : settings.terminal);

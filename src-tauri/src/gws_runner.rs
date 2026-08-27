@@ -395,7 +395,6 @@ pub fn spawn_stream<R: Runtime>(
     {
         let app = app.clone();
         let meta = meta.clone();
-        let cwd = cwd.to_string();
         let confirm_silence = clamped_confirm_timeout(confirm_timeout_ms);
         let secs_text = confirm_secs_text(confirm_silence);
         std::thread::spawn(move || loop {
@@ -416,7 +415,7 @@ pub fn spawn_stream<R: Runtime>(
             // 单次加锁：确认未结束才记录 Confirm（与 waiter 的 Exit 临界区互斥）
             let mut runs = lock_runs();
             if runs.get(&run_id).is_some_and(|st| !st.finished) {
-                let question = format!("gws 在 {cwd} 等待确认（{secs_text} 无输出）。确认继续？");
+                let question = format!("gws 已 {secs_text} 无输出，可能正在等待输入。继续执行？");
                 push_event_locked(&mut runs, &app, run_id, PendingEvent::Confirm(question));
             }
             return;
