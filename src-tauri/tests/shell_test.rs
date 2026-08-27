@@ -1,6 +1,6 @@
 use gws_desk_lib::shell::{
     applescript_escape, detect_terminal, iterm_installed, macos_terminal_script,
-    parse_version_from_body, shell_quote_path, TerminalPreference,
+    parse_version_from_body, read_text_file, shell_quote_path, TerminalPreference,
 };
 
 #[test]
@@ -216,4 +216,31 @@ fn parse_version_empty_value_returns_none() {
     assert_eq!(parse_version_from_body("GWS_VERSION=\n"), None);
     assert_eq!(parse_version_from_body("GWS_VERSION=\"\"\n"), None);
     assert_eq!(parse_version_from_body("GWS_VERSION=''\n"), None);
+}
+
+/// 临时文件名带进程 id 与测试标签：cargo 并行跑测试，防互撞互删
+fn read_text_temp_path(tag: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("gws_desk_read_text_{}_{}.md", std::process::id(), tag))
+}
+
+#[test]
+fn read_text_file_roundtrips_utf8_content() {
+    let path = read_text_temp_path("roundtrip");
+    // 文档查看器读的是 gws 生成的 markdown（含中文 front matter），UTF-8 必须无损往返
+    let content = "---\ntitle: 技术方案\n---\n\n# 标题\n\n- 中文要点\n";
+    std::fs::write(&path, content).expect("写临时文件失败");
+    assert_eq!(
+        read_text_file(path.to_string_lossy().into_owned()).unwrap(),
+        content
+    );
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn read_text_file_missing_file_returns_err_with_path() {
+    let path = read_text_temp_path("missing");
+    let _ = std::fs::remove_file(&path); // 防上轮残留把"不存在"测成"存在"
+    let err = read_text_file(path.to_string_lossy().into_owned()).unwrap_err();
+    assert!(err.contains("读取文件失败"), "错误须带中文前缀: {err}");
+    assert!(err.contains(path.to_str().unwrap()), "错误须含路径便于定位: {err}");
 }

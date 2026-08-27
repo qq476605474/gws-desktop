@@ -197,6 +197,14 @@ pub fn hub_exists(path: String) -> bool {
     Path::new(&path).join(".gws-hub").is_file()
 }
 
+/// (async)：本地小文件读取通常毫秒级，但网络盘/超大文件仍可能阻塞——
+/// 与其他 IO 命令一致放线程池执行，防主线程卡顿。
+#[tauri::command(async)]
+pub fn read_text_file(path: String) -> Result<String, String> {
+    // io::Error 不含路径，前缀补上才好定位是哪个文件读失败
+    std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败 {path}: {e}"))
+}
+
 /// (async)：curl 最长阻塞 60s，须在主线程外执行（sync fn + async 标记 → 线程池）。
 #[tauri::command(async)]
 pub fn latest_gws_version() -> Result<String, String> {

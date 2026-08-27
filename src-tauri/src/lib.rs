@@ -18,6 +18,7 @@ pub fn run() {
             shell::check_gws_installed,
             shell::latest_gws_version,
             shell::hub_exists,
+            shell::read_text_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

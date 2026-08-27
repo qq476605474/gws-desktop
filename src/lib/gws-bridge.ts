@@ -37,6 +37,12 @@ export function hubExists(path: string): Promise<boolean> {
   return invoke<boolean>("hub_exists", { path });
 }
 
+/** 读取 UTF-8 文本文件内容（文档查看器）。Rust 侧 Result：文件不存在/编码无效
+ *  时 invoke reject（错误带路径），不会 resolve 空串冒充成功。 */
+export function readTextFile(path: string): Promise<string> {
+  return invoke<string>("read_text_file", { path });
+}
+
 /** 在系统文件管理器（macOS Finder 等）中打开指定目录。 */
 export function openInFinder(path: string): Promise<void> {
   return invoke("open_in_finder", { path });
