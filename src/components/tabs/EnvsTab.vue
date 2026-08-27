@@ -27,12 +27,15 @@ function toggle(e: string) {
 async function load(e: string) {
   // 赋值后须经 modules.value[e]（reactive 代理）改字段：改本地原始对象不触发重渲染
   modules.value[e] = { loading: true, error: "", list: [] };
+  // await 期间缓存槽可能被 invalidateModules/rmEnv 删除重建——须重新取槽，
+  // 否则旧请求会写进新槽（覆盖新数据）或对已删槽赋值抛 TypeError
+  const slot = modules.value[e]!;
   try {
-    modules.value[e].list = await listDir(`${hub.path}/envs/${e}`);
+    slot.list = await listDir(`${hub.path}/envs/${e}`);
   } catch (err) {
-    modules.value[e].error = String(err);
+    slot.error = String(err);
   } finally {
-    modules.value[e].loading = false;
+    slot.loading = false;
   }
 }
 

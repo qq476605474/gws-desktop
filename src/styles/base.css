@@ -19,13 +19,28 @@ button, input, select {
   min-height: var(--control-h);
   padding: 0 var(--control-pad-x);
   border-radius: var(--radius);
+  width: 100%;
+  max-width: 320px;
 }
+
+/* 弹窗/工具栏内的行内控件由局部 flex:1 或显式宽度接管（max-width 防超长 placeholder 撑爆）；
+   按钮 width:auto——按钮宽度应随文字走，全宽按钮反而是工具栏大忌 */
+button { width: auto; max-width: none; }
 
 button {
   border: 1px solid var(--border);
   background: var(--bg-soft);
   color: var(--fg);
   cursor: pointer;
+}
+
+/* 输入控件显式边框与底色：不设则 WKWebView 沿用 UA 阴影式外观，
+   与按钮的平边框风格不一致（同一工具栏里深浅突兀）。
+   --bg-panel 是终端输出的深底色（沿用 OutputPanel），输入框须用页面底色 */
+input:not([type="checkbox"]), select {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
 }
 
 /* 变体类全局化：.primary/.danger 此前在约 10 个组件里逐份复制 */
@@ -44,7 +59,14 @@ input[type="checkbox"] {
 }
 
 button:disabled, input:disabled, select:disabled { opacity: .55; cursor: not-allowed; }
-button:focus-visible, input:focus-visible, select:focus-visible {
+/* 双边框来源：UA 给输入框 focus 加 border-color 变色 + 外发光，与自定义 outline 叠加。
+   收敛为单一焦点环：输入控件 focus 时边框同步描色，视觉上是一层 2px 环而不是两层 */
+input:not([type="checkbox"]):focus, select:focus {
+  outline: 2px solid var(--primary);
+  outline-offset: 0;
+  border-color: var(--primary);
+}
+button:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
