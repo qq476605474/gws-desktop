@@ -75,7 +75,7 @@ async function sync() {
       <div><strong>{{ e }}</strong> <span class="muted">模块数见 sync 输出</span></div>
       <span>
         <PathActions :path="`${hub.path}/envs/${e}`" />
-        <button :disabled="cmd.isRunning()" @click="rmEnv(e)">移除</button>
+        <button class="btn-sm" :disabled="cmd.isRunning()" @click="rmEnv(e)">移除</button>
       </span>
     </div>
     <p v-if="!hub.envs.length && !hub.error" class="muted">(暂无环境)</p>

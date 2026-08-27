@@ -6,6 +6,11 @@
    同时清掉 UA body margin——否则 100vh 主容器 + 8px 外边距会把页面撑出滚动条 */
 html, body { margin: 0; height: 100%; overflow: hidden; }
 #app { height: 100%; }
+/* 显式字体栈：WKWebView 无 UA 页面字体声明时正文会落到衬线体 */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+}
 
 button, input, select {
   box-sizing: border-box;

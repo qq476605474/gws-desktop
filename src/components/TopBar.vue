@@ -47,6 +47,7 @@ async function switchHub() {
 .brand { font-weight: 700; }
 .spacer { flex: 1; }
 nav { display: flex; gap: 4px; }
-/* 显式 fg：不依赖 UA 按钮色（未设 color-scheme 时 dark 主题下黑字压深底仅 1.80:1） */
-.active { background: var(--mono-bg); color: var(--fg); }
+/* 显式 fg：不依赖 UA 按钮色（未设 color-scheme 时 dark 主题下黑字压深底仅 1.80:1）。
+   light/macos 下 --mono-bg 与默认底色差仅 5-7/255，单靠底色无法区分——加粗补足 */
+.active { background: var(--mono-bg); color: var(--fg); font-weight: 600; }
 </style>

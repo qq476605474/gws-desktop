@@ -62,7 +62,7 @@ async function rm(name: string) {
       </div>
       <span>
         <PathActions :path="`${hub.path}/repos/${r.name}`" />
-        <button :disabled="cmd.isRunning()" @click="rm(r.name)">移除</button>
+        <button class="btn-sm" :disabled="cmd.isRunning()" @click="rm(r.name)">移除</button>
       </span>
     </div>
     <p v-if="!hub.repos.length && !hub.error" class="muted">(暂无仓库)</p>
