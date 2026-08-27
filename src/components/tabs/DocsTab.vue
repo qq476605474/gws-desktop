@@ -6,6 +6,7 @@ export const HUB_ROOT = "__hub__";
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
 import { runGws, readTextFile } from "../../lib/gws-bridge";
@@ -19,8 +20,8 @@ const cmd = useCmdStore();
 const wsFilter = ref("");
 const docs = ref<DocEntry[]>([]);
 const docsWs = ref(""); // 数据归属快照：doc ls 成功时随 docs/docDir 一起更新，
-// 失败时不动——旧表格的工作区列与行内命令 cwd 均以它为准，保持自洽。
-// hub 根文档的归属也存 HUB_ROOT 哨兵：hub 模式的 UI 差异（路径/上传/新建）全部由此派生
+// 失败时不动——行内命令 cwd 与目录行/文件路径均以它为准，保持自洽。
+// hub 根文档的归属也存 HUB_ROOT 哨兵：hub 模式的 UI 差异（目录路径/上传/新建）全部由此派生
 const newFile = ref("");
 const docDir = ref("");
 const err = ref("");
@@ -31,6 +32,17 @@ const reading = ref(""); // 正在读取内容的文件名：读取期间禁用�
 // 无"切源后旧内容"路径；头部显示完整路径，内容自描述
 const viewer = ref<{ fileName: string; path: string; content: string } | null>(null);
 const isHubData = computed(() => docsWs.value === HUB_ROOT);
+/** 文档目录（目录级访达/终端/复制的落点）：ws 模式 docs/<docdir>，hub 模式 docs/。
+ *  空串 = 无数据归属（未加载/无工作区），目录行不渲染 */
+const dirPath = computed(() => {
+  if (isHubData.value) return `${hub.path}/docs`;
+  return docDir.value ? `${hub.path}/docs/${docDir.value}` : "";
+});
+const dirRel = computed(() => (isHubData.value ? "docs" : `docs/${docDir.value}`));
+/** 文件全路径：hub 根文档在 docs/ 第一层，工作区文档在 docs/<docdir>/ 下 */
+function filePath(file: string) {
+  return isHubData.value ? `${hub.path}/docs/${file}` : `${hub.path}/docs/${docDir.value}/${file}`;
+}
 // 并发守卫：refresh 可能重叠（切换工作区、命令结束刷新、重试），只接受最新一次的结果，
 // 防止旧响应迟到覆盖新数据（模式同 WorkspaceDetail.refresh）
 let seq = 0;
@@ -81,8 +93,9 @@ async function refresh() {
     }
     err.value = "";
     docs.value = entries;
-    // 空列表时 docDir 置空（无行渲染路径）；非空时取首行（docdir 名）
-    docDir.value = entries.length ? dir : "";
+    // docdir 取自首行（剥 ANSI），空列表也保留：目录本身存在（gws new 创建），
+    // 上方文档目录操作行需要它定位
+    docDir.value = dir;
     docsWs.value = target;
   } catch (e) {
     // runGws reject（如 IPC 失败）：错误进同一展示位，不崩、不死加载
@@ -150,15 +163,17 @@ async function commit() {
   await refresh();
 }
 
+/** 文件级操作只留“复制路径”：📂 对文件是打开文件（非预期）、💻 终端对文件无意义；
+ *  访达/终端是目录级操作，收敛到上方文档目录行（用户反馈 #10） */
+async function copyFile(file: string) {
+  await writeText(filePath(file));
+}
+
 async function openViewer(d: DocEntry) {
   if (reading.value) return; // 双击守卫：patch 滞后窗口内的第二击由此拦截
   reading.value = d.file;
   try {
-    // 路径规则与表格路径列/PathActions 一致：hub 根文档在 docs/ 第一层，
-    // 工作区文档在 docs/<docdir>/ 下
-    const path = isHubData.value
-      ? `${hub.path}/docs/${d.file}`
-      : `${hub.path}/docs/${docDir.value}/${d.file}`;
+    const path = filePath(d.file);
     const content = await readTextFile(path);
     viewer.value = { fileName: d.file, path, content };
   } catch (e) {
@@ -190,23 +205,21 @@ onMounted(refresh);
       {{ hub.error || err }}
       <button @click="refresh">重试</button>
     </p>
+    <!-- 目录级操作（访达/终端/复制路径）落点为文档目录本身；表格不再重复工作区/路径列（用户反馈 #10） -->
+    <div v-if="dirPath" class="group-row">📁 <code>{{ dirRel }}</code> <PathActions :path="dirPath" /></div>
     <table v-if="docs.length">
-      <thead><tr><th>文档</th><th>工作区</th><th>Confluence</th><th>路径</th><th v-if="!isHubData">操作</th></tr></thead>
+      <thead><tr><th>文档</th><th>Confluence</th><th>操作</th></tr></thead>
       <tbody>
         <tr v-for="d in docs" :key="d.file">
           <td>
             <!-- 在途读取禁全部行（窗口无上界——网络盘/大文件），不止被点的那行 -->
             <button class="doc-link" title="查看文档" :disabled="!!reading" @click="openViewer(d)">{{ d.file }}</button>
           </td>
-          <td>{{ isHubData ? "hub 根" : docsWs }}</td>
           <td>{{ d.synced ? `● 已同步 (wiki:${d.pageId})` : "○ 未上传" }}</td>
           <td>
-            <code>{{ isHubData ? `docs/${d.file}` : `docs/${docDir}/${d.file}` }}</code>
-            <PathActions :path="isHubData ? `${hub.path}/docs/${d.file}` : `${hub.path}/docs/${docDir}/${d.file}`" />
-          </td>
-          <!-- doc push 同 doc new 写死工作区 docdir：hub 根文档无上传语义，整列不渲染 -->
-          <td v-if="!isHubData">
-            <button class="btn-sm" :disabled="cmd.isRunning()" @click="push(d.file)">上传</button>
+            <button class="btn-sm" title="复制文件路径" @click="copyFile(d.file)">📋</button>
+            <!-- doc push 同 doc new 写死当前工作区 docdir：hub 根文档无上传语义 -->
+            <button v-if="!isHubData" class="btn-sm" :disabled="cmd.isRunning()" @click="push(d.file)">上传</button>
           </td>
         </tr>
       </tbody>
@@ -221,8 +234,8 @@ onMounted(refresh);
 
 <style scoped>
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; align-items: center; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.group-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+/* table/th/td 基础样式全局化（base.css） */
 .muted { color: var(--fg-muted); font-size: 12px; }
 .error { color: var(--danger-text); font-size: 13px; }
 .error button { margin-left: 6px; }

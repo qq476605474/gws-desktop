@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   replayOutput: vi.fn<(runId: number) => Promise<void>>(),
   openInFinder: vi.fn<(path: string) => Promise<void>>(),
   openInTerminal: vi.fn<(path: string, terminal: string | null) => Promise<void>>(),
+  listDir: vi.fn<(path: string) => Promise<string[]>>(),
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
   /** 按事件名保存 listen 注册的 handler，测试中手动触发以模拟 gws-exit 事件 */
   handlers: new Map<string, Handler>(),
@@ -30,6 +31,7 @@ vi.mock("../../lib/gws-bridge", () => ({
   replayOutput: mocks.replayOutput,
   openInFinder: mocks.openInFinder,
   openInTerminal: mocks.openInTerminal,
+  listDir: mocks.listDir,
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -106,6 +108,7 @@ beforeEach(() => {
   mocks.runGws.mockResolvedValue({ code: 0, output: "" });
   mocks.replayOutput.mockResolvedValue(undefined);
   mocks.confirm.mockResolvedValue(true);
+  mocks.listDir.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -210,5 +213,74 @@ describe("EnvsTab", () => {
 
     await exitWith(1, 0); // sync 正常收尾后仍刷新
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
+  });
+});
+
+describe("EnvsTab 环境行展开模块", () => {
+  /** 第 idx 个环境行（.env-row 点击切换展开/收起） */
+  function envRow(idx: number): HTMLElement {
+    const row = el!.querySelectorAll<HTMLElement>(".env-row")[idx];
+    if (!row) throw new Error(`第 ${idx} 个环境行未找到`);
+    return row;
+  }
+
+  it("点击环境行：调 listDir 于 envs/<名> 并展开显示模块；再点收起；收起再展开用缓存不重拉", async () => {
+    mountTab();
+    mocks.listDir.mockResolvedValue(["cart-service", "user-web"]);
+    envRow(0).click(); // dev
+
+    await vi.waitFor(() => expect(mocks.listDir).toHaveBeenCalledWith("/hub/envs/dev"));
+    await vi.waitFor(() => {
+      expect(el!.textContent).toContain("cart-service");
+      expect(el!.textContent).toContain("user-web");
+    });
+
+    envRow(0).click(); // 收起
+    await nextTick();
+    expect(el!.querySelector(".env-modules")).toBeNull();
+    expect(el!.textContent).not.toContain("cart-service");
+
+    mocks.listDir.mockClear();
+    envRow(0).click(); // 再展开：走缓存
+    await nextTick();
+    expect(el!.textContent).toContain("cart-service");
+    expect(mocks.listDir).not.toHaveBeenCalled();
+  });
+
+  it("模块为空：显示（无模块，跑 gws sync 补建）", async () => {
+    mountTab();
+    mocks.listDir.mockResolvedValue([]);
+    envRow(0).click();
+
+    await vi.waitFor(() => expect(el!.textContent).toContain("（无模块，跑 gws sync 补建）"));
+  });
+
+  it("listDir 失败：展开区显示错误小字", async () => {
+    mountTab();
+    mocks.listDir.mockRejectedValue("列出目录失败 /hub/envs/dev: no such file");
+    envRow(0).click();
+
+    await vi.waitFor(() => expect(el!.textContent).toContain("列出目录失败 /hub/envs/dev"));
+  });
+
+  it("PathActions/移除按钮点击不触发展开（@click.stop）", async () => {
+    mountTab();
+    mocks.confirm.mockResolvedValue(false); // 移除走取消分支，避免引入命令执行
+    const row = envRow(0); // dev
+
+    // 移除按钮：confirm 弹出但行不展开
+    const rm = Array.from(row.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === "移除")!;
+    rm.click();
+    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("移除环境 dev？"));
+    expect(mocks.listDir).not.toHaveBeenCalled();
+    expect(el!.querySelector(".env-modules")).toBeNull();
+
+    // PathActions 复制路径按钮：剪贴板被写但行不展开
+    const copy = row.querySelector<HTMLButtonElement>('button[title="复制路径"]')!;
+    copy.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(mocks.listDir).not.toHaveBeenCalled();
+    expect(el!.querySelector(".env-modules")).toBeNull();
   });
 });

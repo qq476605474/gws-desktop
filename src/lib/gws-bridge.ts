@@ -43,6 +43,12 @@ export function readTextFile(path: string): Promise<string> {
   return invoke<string>("read_text_file", { path });
 }
 
+/** 列目录下的一级子目录名（文件不返回，排序稳定显示）。Rust 侧 Result：
+ *  目录不存在等错误 invoke reject（错误带路径）。 */
+export function listDir(path: string): Promise<string[]> {
+  return invoke<string[]>("list_dir", { path });
+}
+
 /** 在系统文件管理器（macOS Finder 等）中打开指定目录。 */
 export function openInFinder(path: string): Promise<void> {
   return invoke("open_in_finder", { path });

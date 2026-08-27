@@ -48,3 +48,10 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: 1px;
 }
+
+/* 全局表格样式：th/td 左对齐与边距此前在 DocsTab/WorkspaceDetail 各复制一份。
+   末列（操作列，按钮组所在）不换行：宽度不够时表格撑出容器、由 .body 横向滚动，
+   而不是按钮折行 */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+td:last-child, th:last-child { white-space: nowrap; }

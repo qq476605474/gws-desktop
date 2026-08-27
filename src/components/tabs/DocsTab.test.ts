@@ -58,6 +58,7 @@ vi.mock("@tauri-apps/plugin-store", () => ({
 }));
 
 import { useHubStore } from "../../stores/hub";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import DocsTab, { HUB_ROOT } from "./DocsTab.vue";
 
 let app: App | null = null;
@@ -170,8 +171,8 @@ describe("DocsTab.refresh", () => {
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
     expect(el!.textContent).toContain("● 已同步 (wiki:123)");
     expect(el!.textContent).toContain("○ 未上传");
-    // docDir 取自首行（剥 ANSI）：路径列为 docs/<docdir>/<file>，无转义序列残留
-    expect(el!.textContent).toContain("docs/2026-08-18-checkout-revamp/技术方案.md");
+    // docDir 取自首行（剥 ANSI）：目录操作行显示 docs/<docdir>，无转义序列残留
+    expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp");
     expect(el!.textContent).not.toContain("\u001b");
     // select 纯列表：工作区名 + Hub 根文档，无「当前:」跟随首项（修复与列表项重复的 bug）
     const optionTexts = Array.from(el!.querySelectorAll("option")).map((o) => o.textContent?.trim());
@@ -211,8 +212,8 @@ describe("DocsTab.refresh", () => {
 
     switchWs("login-crash"); // doc ls 失败：docsWs/docs/docDir 不动
     await vi.waitFor(() => expect(el!.textContent).toContain("gws: 工作区不存在"));
-    // 旧文档表保持自洽：工作区列仍是数据归属的 checkout-revamp，而非切换目标 login-crash
-    expect(el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!.cells[1]!.textContent).toBe("checkout-revamp");
+    // 旧文档表保持自洽：目录行仍是数据归属的 checkout-revamp docdir，而非切换目标 login-crash
+    expect(el!.querySelector(".group-row")!.textContent).toContain("docs/2026-08-18-checkout-revamp");
 
     // 行内"上传"的 cwd 用 docsWs（旧工作区）——旧文件不会 push 到新工作区
     clickButton("上传");
@@ -236,8 +237,8 @@ describe("DocsTab.refresh", () => {
     expect(el!.querySelectorAll("tbody tr").length).toBe(2); // 假列表不进表格，旧数据保留
     expect(el!.textContent).toContain("技术方案.md");
     expect(el!.textContent).not.toContain("README.md");
-    // docDir 未被假值 "docs" 污染：路径列仍是旧 docdir
-    expect(el!.textContent).toContain("docs/2026-08-18-checkout-revamp/技术方案.md");
+    // docDir 未被假值 "docs" 污染：目录行仍是旧 docdir
+    expect(el!.querySelector(".group-row")!.textContent).toContain("docs/2026-08-18-checkout-revamp");
     expect(el!.textContent).toContain("重试");
   });
 
@@ -339,7 +340,7 @@ describe("DocsTab.refresh", () => {
 });
 
 describe("DocsTab Hub 根文档源", () => {
-  it("切到「Hub 根文档」：doc ls 于 hub 根 cwd；首行 docs 为正常态，表格渲染 hub 列表且无上传列、新建禁用、commit 保留", async () => {
+  it("切到「Hub 根文档」：doc ls 于 hub 根 cwd；首行 docs 为正常态，表格渲染 hub 列表且无上传按钮、新建禁用、commit 保留", async () => {
     mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 挂载默认首个工作区
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
@@ -347,14 +348,13 @@ describe("DocsTab Hub 根文档源", () => {
 
     switchWs(HUB_ROOT);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2)); // hub 列表两行
-    // hub 差异：工作区列「hub 根」、路径列 docs/<file>（无 docdir 层）
-    expect(el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!.cells[1]!.textContent).toBe("hub 根");
-    // 精确断言路径列 code 文本：ws 模式会渲染 docs/<docdir>/README.md，仅 toContain 无判别力
-    expect(el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!.cells[3]!.querySelector("code")!.textContent).toBe("docs/README.md");
+    // hub 列表两行（README.md/规范.md）；旧数据同为 2 行，须等 hub 特有文件出现才算切换完成
+    await vi.waitFor(() => expect(el!.textContent).toContain("README.md"));
+    // hub 差异：目录操作行落点为 docs/ 根（无 docdir 层），精确断言 code 文本
+    expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs");
     expect(el!.querySelector(".error")).toBeNull(); // 首行 "docs" 在 hub 模式不触发哨兵
-    // 无上传列：表头无「操作」、行内无上传按钮（底部说明文案仍含「上传」字样，故查按钮）
-    expect(el!.querySelector("thead")!.textContent).not.toContain("操作");
+    // 操作列保留（📋 复制文件路径）但无上传按钮：doc push 写死工作区 docdir，hub 根文档无上传语义
+    expect(el!.querySelector("thead")!.textContent).toContain("操作");
     expect(Array.from(el!.querySelectorAll("button")).filter((b) => b.textContent?.trim() === "上传")).toHaveLength(0);
     // doc new 是 ws 级：输入框与新建按钮禁用
     expect(el!.querySelector<HTMLInputElement>("input")!.disabled).toBe(true);
@@ -391,14 +391,14 @@ describe("DocsTab Hub 根文档源", () => {
 
     switchWs(HUB_ROOT); // doc ls 失败：docsWs/docs/docDir 不动
     await vi.waitFor(() => expect(el!.textContent).toContain("gws: hub 文档仓库不存在"));
-    // 旧 ws 表保持自洽：工作区列仍是 checkout-revamp，上传按钮仍可用（归属旧工作区）
-    expect(el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!.cells[1]!.textContent).toBe("checkout-revamp");
+    // 旧 ws 表保持自洽：目录行仍是 checkout-revamp 的 docdir，上传按钮仍可用（归属旧工作区）
+    expect(el!.querySelector(".group-row")!.textContent).toContain("docs/2026-08-18-checkout-revamp");
     expect(Array.from(el!.querySelectorAll("button")).filter((b) => b.textContent?.trim() === "上传")).toHaveLength(2);
   });
 });
 
 describe("DocsTab 文档查看", () => {
-  it("ws 模式点击文件名：readTextFile 于 docs/<docdir>/<file>（与路径列一致），弹窗展示内容；点 mask 关闭", async () => {
+  it("ws 模式点击文件名：readTextFile 于 docs/<docdir>/<file>（与文件复制路径一致），弹窗展示内容；点 mask 关闭", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
     mocks.readTextFile.mockResolvedValue("# 技术方案\n\n正文内容");
     mountTab();
@@ -603,5 +603,71 @@ describe("DocsTab 命令操作", () => {
 
     await exitWith(1, 0);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
+  });
+});
+
+describe("DocsTab 目录行与文件复制", () => {
+  /** 目录操作行（.group-row）里的 PathActions 按钮，按 title 找 */
+  function dirButton(title: string): HTMLButtonElement {
+    const btn = el!.querySelector(".group-row")!.querySelector<HTMLButtonElement>(`button[title="${title}"]`);
+    if (!btn) throw new Error(`目录行按钮「${title}」未找到`);
+    return btn;
+  }
+
+  it("目录操作行：ws 模式显示 docs/<docdir>，PathActions 的 path 为目录全路径", async () => {
+    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+
+    expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp");
+    dirButton("复制路径").click();
+    await vi.waitFor(() =>
+      expect(vi.mocked(writeText)).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp"),
+    );
+  });
+
+  it("目录操作行：hub 模式 code 为 docs，path 为 <hub>/docs；文件复制按钮走 docs/ 第一层", async () => {
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 挂载默认首个工作区
+    mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    switchWs(HUB_ROOT);
+    // 旧 ws 数据同为 2 行：等目录行切到 docs/ 根才算 hub 数据已渲染
+    await vi.waitFor(() =>
+      expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs"),
+    );
+
+    dirButton("复制路径").click();
+    await vi.waitFor(() => expect(vi.mocked(writeText)).toHaveBeenCalledWith("/hub/docs"));
+
+    // 文件复制（hub 文件在 docs/ 第一层，无 docdir）
+    el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!
+      .querySelector<HTMLButtonElement>('button[title="复制文件路径"]')!
+      .click();
+    await vi.waitFor(() => expect(vi.mocked(writeText)).toHaveBeenCalledWith("/hub/docs/README.md"));
+  });
+
+  it("文件行复制按钮：writeText 带文件全路径（ws 模式含 docdir 层）", async () => {
+    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+
+    el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!
+      .querySelector<HTMLButtonElement>('button[title="复制文件路径"]')!
+      .click();
+    await vi.waitFor(() =>
+      expect(vi.mocked(writeText)).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp/技术方案.md"),
+    );
+  });
+
+  it("空文档列表：docDir 仍保留（目录本身存在），目录操作行照常显示", async () => {
+    // doc ls 只输出首行 docdir、无文件行：目录行仍可定位，空态文案照常
+    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut([]) });
+    mountTab();
+
+    await vi.waitFor(() => expect(el!.querySelector(".group-row")).toBeTruthy());
+    expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp");
+    expect(el!.textContent).toContain("（暂无文档——在当前工作区 gws doc new 创建）");
+    expect(el!.querySelector("table")).toBeNull();
   });
 });

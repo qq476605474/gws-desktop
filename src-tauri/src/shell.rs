@@ -213,6 +213,27 @@ pub fn read_text_file(path: String) -> Result<String, String> {
     std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败 {path}: {e}"))
 }
 
+/// (async)：网络盘上的 read_dir 可能阻塞，与其他 IO 命令一致放线程池执行。
+/// 列目录下的一级子目录名（文件不返回），排序保证稳定显示。
+#[tauri::command(async)]
+pub fn list_dir(path: String) -> Result<Vec<String>, String> {
+    let entries = std::fs::read_dir(&path).map_err(|e| format!("列出目录失败 {path}: {e}"))?;
+    let mut dirs = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("列出目录失败 {path}: {e}"))?;
+        // file_type 基于目录项本身（不追随符号链接）：非目录一律不返回
+        let is_dir = entry.file_type().map_err(|e| format!("列出目录失败 {path}: {e}"))?.is_dir();
+        if is_dir {
+            // 非 UTF-8 文件名无法过 IPC 的 JSON 序列化，跳过而非让整个调用失败
+            if let Some(name) = entry.file_name().to_str() {
+                dirs.push(name.to_string());
+            }
+        }
+    }
+    dirs.sort();
+    Ok(dirs)
+}
+
 /// (async)：curl 最长阻塞 60s，须在主线程外执行（sync fn + async 标记 → 线程池）。
 #[tauri::command(async)]
 pub fn latest_gws_version() -> Result<String, String> {

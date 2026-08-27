@@ -168,8 +168,7 @@ onMounted(refresh);
 .detail { padding: 4px 0; }
 .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .ops { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; align-items: center; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+/* table/th/td 基础样式全局化（base.css） */
 .warn { color: var(--warn-text); font-weight: 600; }
 .error { color: var(--danger-text); font-size: 13px; margin: 0 0 12px; }
 .error button { margin-left: 6px; }

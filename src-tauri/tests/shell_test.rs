@@ -1,5 +1,5 @@
 use gws_desk_lib::shell::{
-    applescript_escape, detect_terminal, iterm_installed, macos_terminal_script,
+    applescript_escape, detect_terminal, iterm_installed, list_dir, macos_terminal_script,
     parse_version_from_body, read_text_file, shell_quote_path, TerminalPreference,
 };
 
@@ -254,4 +254,37 @@ fn read_text_file_rejects_oversized_file() {
     let err = read_text_file(path.to_string_lossy().into_owned()).unwrap_err();
     assert!(err.contains("文件过大"), "错误须说明大小拦截: {err}");
     let _ = std::fs::remove_file(&path);
+}
+
+/// 临时目录名带进程 id 与测试标签：cargo 并行跑测试，防互撞互删
+fn list_dir_temp_root(tag: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("gws_desk_list_dir_{}_{}", std::process::id(), tag));
+    let _ = std::fs::remove_dir_all(&dir); // 防上轮残留干扰
+    std::fs::create_dir_all(&dir).expect("建临时目录失败");
+    dir
+}
+
+#[test]
+fn list_dir_returns_only_first_level_dirs_sorted() {
+    let root = list_dir_temp_root("ok");
+    std::fs::create_dir_all(root.join("zeta")).unwrap();
+    std::fs::create_dir_all(root.join("alpha")).unwrap();
+    std::fs::create_dir_all(root.join("nested/inner")).unwrap(); // 只列一级：inner 不单独出现
+    std::fs::write(root.join("a.txt"), b"x").unwrap(); // 文件一律不返回
+    std::fs::write(root.join("nested/b.md"), b"x").unwrap();
+
+    // read_dir 顺序随文件系统而定，排序保证 UI 稳定显示
+    let res = list_dir(root.to_string_lossy().into_owned()).unwrap();
+    assert_eq!(res, vec!["alpha", "nested", "zeta"]);
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn list_dir_missing_path_errors_with_path() {
+    let root = list_dir_temp_root("missing");
+    let _ = std::fs::remove_dir_all(&root); // 目录不存在才走错误分支
+    let err = list_dir(root.to_string_lossy().into_owned()).unwrap_err();
+    assert!(err.contains("列出目录失败"), "错误须带中文前缀: {err}");
+    assert!(err.contains(root.to_str().unwrap()), "错误须含路径便于定位: {err}");
 }
