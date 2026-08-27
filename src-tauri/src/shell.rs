@@ -201,6 +201,14 @@ pub fn hub_exists(path: String) -> bool {
 /// 与其他 IO 命令一致放线程池执行，防主线程卡顿。
 #[tauri::command(async)]
 pub fn read_text_file(path: String) -> Result<String, String> {
+    // 文档查看器用途：超大文件整串过 IPC 再渲染单个 pre 会卡死 webview，读前拦下
+    const MAX_BYTES: u64 = 2 * 1024 * 1024;
+    let len = std::fs::metadata(&path)
+        .map_err(|e| format!("读取文件失败 {path}: {e}"))?
+        .len();
+    if len > MAX_BYTES {
+        return Err(format!("文件过大（{len} 字节，上限 2MB）: {path}"));
+    }
     // io::Error 不含路径，前缀补上才好定位是哪个文件读失败
     std::fs::read_to_string(&path).map_err(|e| format!("读取文件失败 {path}: {e}"))
 }

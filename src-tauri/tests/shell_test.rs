@@ -244,3 +244,14 @@ fn read_text_file_missing_file_returns_err_with_path() {
     assert!(err.contains("读取文件失败"), "错误须带中文前缀: {err}");
     assert!(err.contains(path.to_str().unwrap()), "错误须含路径便于定位: {err}");
 }
+
+#[test]
+fn read_text_file_rejects_oversized_file() {
+    let path = read_text_temp_path("oversize");
+    // 2MB 上限 +1 字节：超大 md 整串过 IPC 渲染进单个 pre 会卡死 webview，读前必须拦下
+    let big = "x".repeat(2 * 1024 * 1024 + 1);
+    std::fs::write(&path, &big).expect("写临时文件失败");
+    let err = read_text_file(path.to_string_lossy().into_owned()).unwrap_err();
+    assert!(err.contains("文件过大"), "错误须说明大小拦截: {err}");
+    let _ = std::fs::remove_file(&path);
+}

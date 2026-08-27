@@ -58,7 +58,7 @@ vi.mock("@tauri-apps/plugin-store", () => ({
 }));
 
 import { useHubStore } from "../../stores/hub";
-import DocsTab from "./DocsTab.vue";
+import DocsTab, { HUB_ROOT } from "./DocsTab.vue";
 
 let app: App | null = null;
 let el: HTMLElement | null = null;
@@ -345,12 +345,13 @@ describe("DocsTab Hub 根文档源", () => {
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
 
-    switchWs("__hub__");
+    switchWs(HUB_ROOT);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2)); // hub 列表两行
     // hub 差异：工作区列「hub 根」、路径列 docs/<file>（无 docdir 层）
     expect(el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!.cells[1]!.textContent).toBe("hub 根");
-    expect(el!.textContent).toContain("docs/README.md");
+    // 精确断言路径列 code 文本：ws 模式会渲染 docs/<docdir>/README.md，仅 toContain 无判别力
+    expect(el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!.cells[3]!.querySelector("code")!.textContent).toBe("docs/README.md");
     expect(el!.querySelector(".error")).toBeNull(); // 首行 "docs" 在 hub 模式不触发哨兵
     // 无上传列：表头无「操作」、行内无上传按钮（底部说明文案仍含「上传」字样，故查按钮）
     expect(el!.querySelector("thead")!.textContent).not.toContain("操作");
@@ -371,7 +372,7 @@ describe("DocsTab Hub 根文档源", () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
-    switchWs("__hub__");
+    switchWs(HUB_ROOT);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
 
     clickButton("commit 全部文档");
@@ -388,7 +389,7 @@ describe("DocsTab Hub 根文档源", () => {
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
 
-    switchWs("__hub__"); // doc ls 失败：docsWs/docs/docDir 不动
+    switchWs(HUB_ROOT); // doc ls 失败：docsWs/docs/docDir 不动
     await vi.waitFor(() => expect(el!.textContent).toContain("gws: hub 文档仓库不存在"));
     // 旧 ws 表保持自洽：工作区列仍是 checkout-revamp，上传按钮仍可用（归属旧工作区）
     expect(el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!.cells[1]!.textContent).toBe("checkout-revamp");
@@ -425,7 +426,7 @@ describe("DocsTab 文档查看", () => {
     mocks.readTextFile.mockResolvedValue("# Hub README\n\n说明");
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
-    switchWs("__hub__");
+    switchWs(HUB_ROOT);
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(1));
 
     fileButton("README.md").click();
@@ -459,10 +460,12 @@ describe("DocsTab 文档查看", () => {
     expect(mocks.readTextFile).toHaveBeenCalledTimes(1);
     await nextTick();
     expect(fileButton("技术方案.md").disabled).toBe(true);
+    expect(fileButton("排期.md").disabled).toBe(true); // 在途读取禁全部行（跨行也禁）
 
     release("# 内容");
     await vi.waitFor(() => expect(el!.querySelector(".mask")).toBeTruthy());
     expect(fileButton("技术方案.md").disabled).toBe(false); // 读取完成恢复可点
+    expect(fileButton("排期.md").disabled).toBe(false);
   });
 });
 

@@ -1,3 +1,9 @@
+// script setup 不允许 ES 导出，测试需要的哨兵常量放这里
+<script lang="ts">
+// select「Hub 根文档」的哨兵值（工作区名不会取此形），docsWs 归属快照同样用它标记 hub 数据
+export const HUB_ROOT = "__hub__";
+</script>
+
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
 import { useHubStore } from "../../stores/hub";
@@ -7,9 +13,6 @@ import { stripAnsi } from "../../lib/ansi";
 import { parseDocDir, parseDocLs, parseLs, type DocEntry } from "../../lib/parse";
 import PathActions from "../PathActions.vue";
 import DocViewerDialog from "../DocViewerDialog.vue";
-
-// select「Hub 根文档」的哨兵值（工作区名不会取此形），docsWs 归属快照同样用它标记 hub 数据
-const HUB_ROOT = "__hub__";
 
 const hub = useHubStore();
 const cmd = useCmdStore();
@@ -23,7 +26,9 @@ const docDir = ref("");
 const err = ref("");
 const submitting = ref(false);
 const loading = ref(false);
-const reading = ref(""); // 正在读取内容的文件名：本地读取极快，仅以此禁用该行按钮防重入
+const reading = ref(""); // 正在读取内容的文件名：读取期间禁用所有 doc-link 防重入/跨行点击
+// viewer 内容是打开瞬间的快照，refresh 从不重置它——弹窗 mask 盖全屏时 select 不可达，
+// 无"切源后旧内容"路径；头部显示完整路径，内容自描述
 const viewer = ref<{ fileName: string; path: string; content: string } | null>(null);
 const isHubData = computed(() => docsWs.value === HUB_ROOT);
 // 并发守卫：refresh 可能重叠（切换工作区、命令结束刷新、重试），只接受最新一次的结果，
@@ -157,7 +162,7 @@ async function openViewer(d: DocEntry) {
     const content = await readTextFile(path);
     viewer.value = { fileName: d.file, path, content };
   } catch (e) {
-    // 读取失败（文件被移走/权限等）：错误进既有展示位，弹窗不出现
+    // 读取失败（文件被移走/权限/超大等）：错误进既有展示位，弹窗不出现
     err.value = String(e);
   } finally {
     reading.value = "";
@@ -171,7 +176,8 @@ onMounted(refresh);
   <div>
     <div class="toolbar">
       <select v-model="wsFilter" @change="refresh">
-        <option v-for="w in hub.workspaces" :key="w.name" :value="w.name">{{ w.name }}</option>
+        <!-- 过滤同名工作区：万一真有叫 __hub__ 的工作区，哨兵会静默错位到 hub 根 -->
+        <option v-for="w in hub.workspaces.filter((w) => w.name !== HUB_ROOT)" :key="w.name" :value="w.name">{{ w.name }}</option>
         <option :value="HUB_ROOT">Hub 根文档</option>
       </select>
       <!-- doc new 写死当前工作区 docdir：hub 根文档不可新建，输入与按钮随归属禁用 -->
@@ -189,7 +195,8 @@ onMounted(refresh);
       <tbody>
         <tr v-for="d in docs" :key="d.file">
           <td>
-            <button class="doc-link" :disabled="reading === d.file" @click="openViewer(d)">{{ d.file }}</button>
+            <!-- 在途读取禁全部行（窗口无上界——网络盘/大文件），不止被点的那行 -->
+            <button class="doc-link" title="查看文档" :disabled="!!reading" @click="openViewer(d)">{{ d.file }}</button>
           </td>
           <td>{{ isHubData ? "hub 根" : docsWs }}</td>
           <td>{{ d.synced ? `● 已同步 (wiki:${d.pageId})` : "○ 未上传" }}</td>
