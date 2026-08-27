@@ -41,12 +41,12 @@ async function refresh() {
     stErr.value = String(e);
   }
 }
-async function doCmd(label: string, args: string[], cwd: string = wsPath.value) {
+async function doCmd(label: string, args: string[], cwd: string = wsPath.value, opts?: { confirmTimeoutMs?: number }) {
   try {
-    const run = await cmd.exec(label, args, cwd);
+    const run = await cmd.execDialog(label, args, cwd, opts);
     await cmd.waitDone(run); // 等终态再 refresh，否则命令仍在跑、拿到的是旧数据
   } catch (e) {
-    // exec/waitDone reject（如 IPC 失败）：并入 stErr 错误行，避免 unhandled rejection
+    // execDialog/waitDone reject（如 IPC 失败）：并入 stErr 错误行，避免 unhandled rejection
     stErr.value = String(e);
   }
   // 命令结束后总是 refresh（即使命令失败）：refresh 自身有错误保护
@@ -62,16 +62,16 @@ async function removeWs() {
   }
   if (!ok) return;
   try {
-    const run = await cmd.exec(`gws rm ${props.name} --force`, ["rm", props.name, "--force"], hub.path);
+    const run = await cmd.execDialog(`gws rm ${props.name} --force`, ["rm", props.name, "--force"], hub.path);
     await cmd.waitDone(run);
     if (run.state === "done") {
       // 删除成功：先刷新列表再关闭，否则返回后列表仍显示已删工作区；
-      // 失败分支不刷新（列表未变），错误输出走输出面板
+      // 失败分支不刷新（列表未变），错误输出见命令弹窗
       await hub.refreshAll();
       emit("close");
     }
   } catch (e) {
-    stErr.value = String(e); // exec reject：并入 stErr 错误行，避免 unhandled rejection
+    stErr.value = String(e); // execDialog reject：并入 stErr 错误行，避免 unhandled rejection
   }
 }
 onMounted(refresh);
@@ -114,7 +114,8 @@ onMounted(refresh);
           <td :class="{ warn: (m.dirty ?? 0) > 0 }">{{ m.missing ? "目录缺失" : m.dirty }}</td>
           <td>{{ m.pushed === false ? "未推送" : `↑${m.ahead ?? 0} ↓${m.behind ?? 0}` }}</td>
           <td>+{{ m.aheadOfMain ?? "?" }}</td>
-          <td><button :disabled="cmd.isRunning()" @click="doCmd(`gws drop ${m.name}`, ['drop', m.name])">移除</button></td>
+          <!-- gws drop 是 GUI 下唯一真读 stdin 的命令：保持默认 1.5s 确认超时（其余命令 30s 防假确认） -->
+          <td><button :disabled="cmd.isRunning()" @click="doCmd(`gws drop ${m.name}`, ['drop', m.name], undefined, { confirmTimeoutMs: 1500 })">移除</button></td>
         </tr>
       </tbody>
     </table>

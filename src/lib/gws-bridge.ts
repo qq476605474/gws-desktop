@@ -1,15 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
+import { busyCount } from "./busy";
 
 export interface RunResult { code: number | null; output: string; }
 
-/** 在指定 cwd 执行 gws（一次性收集全部输出）。args 不含 "gws" 本身。 */
+/** 在指定 cwd 执行 gws（一次性收集全部输出）。args 不含 "gws" 本身。
+ * 数据刷新类调用：在途期间 busyCount +1（App.vue 全屏加载遮罩挡住其他操作），
+ * resolve/reject 均归零（finally）。 */
 export function runGws(args: string[], cwd: string): Promise<RunResult> {
-  return invoke<RunResult>("run_gws", { args, cwd });
+  busyCount.value++;
+  return invoke<RunResult>("run_gws", { args, cwd }).finally(() => {
+    busyCount.value--;
+  });
 }
 
-/** 流式执行：返回 runId，输出经 Tauri 事件 gws-output:<runId> 推送。 */
-export function runGwsStream(args: string[], cwd: string): Promise<number> {
-  return invoke<number>("run_gws_stream", { args, cwd });
+/** 流式执行：返回 runId，输出经 Tauri 事件 gws-output:<runId> 推送。
+ * confirmTimeoutMs：stdout 静默多久后发 gws-confirm（缺省走 Rust 侧默认 1500ms）。
+ * 慢命令（sync 的静默 git 阶段、repo add 的 clone）须传大值（如 30000）防假确认；
+ * 真读 stdin 的命令（gws drop）保持默认。参数名 camelCase 由 Tauri 自动映射
+ * Rust 侧 snake_case 的 confirm_timeout_ms（与 runId → run_id 同一机制）。 */
+export function runGwsStream(args: string[], cwd: string, confirmTimeoutMs?: number): Promise<number> {
+  return invoke<number>("run_gws_stream", { args, cwd, confirmTimeoutMs });
 }
 
 /** 交互确认场景：向 stdin 写入 "y\n"（yes=true）或杀进程（yes=false）。 */

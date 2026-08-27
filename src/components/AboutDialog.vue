@@ -53,13 +53,13 @@ async function update() {
   if (updating.value || cmd.isRunning()) return;
   updating.value = true;
   try {
-    const run = await cmd.exec("gws update", ["update"], hub.path);
+    const run = await cmd.execDialog("gws update", ["update"], hub.path);
     await cmd.waitDone(run); // exec 返回时 update 尚未跑完——等终态再查版本，否则拿到旧版本号
     // 非零退出上报（对照 AddModuleDialog 检查 state !== "done"）：loadCurrent 入口清 err，
     // 失败提示须设在其后，否则被静默抹掉
     const failed = run.state !== "done";
     await loadCurrent();
-    if (failed) err.value = "gws update 未成功（详见输出面板）";
+    if (failed) err.value = "gws update 未成功（详见命令弹窗）";
   } catch (e) {
     err.value = String(e);
   } finally {

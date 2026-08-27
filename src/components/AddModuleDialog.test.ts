@@ -10,7 +10,7 @@ type Handler = (e: { payload: Payload }) => void;
 
 // vi.mock 工厂随 import 提升、早于本文件函数体执行，共享状态须经 vi.hoisted 创建以避免 TDZ
 const mocks = vi.hoisted(() => ({
-  runGwsStream: vi.fn<(args: string[], cwd: string) => Promise<number>>(),
+  runGwsStream: vi.fn<(args: string[], cwd: string, confirmTimeoutMs?: number) => Promise<number>>(),
   respondConfirm: vi.fn<(runId: number, yes: boolean) => Promise<void>>(),
   replayOutput: vi.fn<(runId: number) => Promise<void>>(),
   /** 按事件名保存 listen 注册的 handler，测试中手动触发以模拟 gws-exit 事件 */
@@ -33,6 +33,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 import { useHubStore } from "../stores/hub";
+import { useCmdStore } from "../stores/cmd";
 import AddModuleDialog from "./AddModuleDialog.vue";
 
 let app: App | null = null;
@@ -107,13 +108,14 @@ describe("AddModuleDialog.add 部分失败处理", () => {
     await exitWith(1, 1);
     await exitWith(2, 0);
 
-    await vi.waitFor(() => expect(el!.textContent).toContain("部分模块添加失败：mod-a（详见输出面板）"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("部分模块添加失败：mod-a（详见命令弹窗）"));
     expect(added).not.toHaveBeenCalled();
     expect(closed).not.toHaveBeenCalled();
-    // 失败不中断：两个模块都被尝试，且在弹窗工作区目录下执行
+    // 失败不中断：两个模块都被尝试，且在弹窗工作区目录下执行；
+    // execDialog 默认 confirmTimeoutMs=30000（慢命令防假确认）
     expect(mocks.runGwsStream).toHaveBeenCalledTimes(2);
-    expect(mocks.runGwsStream).toHaveBeenNthCalledWith(1, ["add", "mod-a"], "/hub/ws/demo");
-    expect(mocks.runGwsStream).toHaveBeenNthCalledWith(2, ["add", "mod-b"], "/hub/ws/demo");
+    expect(mocks.runGwsStream).toHaveBeenNthCalledWith(1, ["add", "mod-a"], "/hub/ws/demo", 30000);
+    expect(mocks.runGwsStream).toHaveBeenNthCalledWith(2, ["add", "mod-b"], "/hub/ws/demo", 30000);
 
     // 已成功项被剔除：mod-a（失败）保持勾选可直接重试，mod-b（成功）取消勾选
     await nextTick();
@@ -122,21 +124,26 @@ describe("AddModuleDialog.add 部分失败处理", () => {
     expect(after[1]!.checked).toBe(false);
   });
 
-  it("全部成功：行为不变——emit added 与 close，无错误提示", async () => {
+  it("全部成功：行为不变——emit added 与 close，无错误提示；序列期间 hold 弹窗、结束释放", async () => {
     const added = vi.fn();
     const closed = vi.fn();
     mountDialog(added, closed);
     let nextId = 0;
     mocks.runGwsStream.mockImplementation(async () => ++nextId);
+    const cmd = useCmdStore();
 
     await checkAll();
     clickAdd();
 
     await exitWith(1, 0);
+    // 序列中途（第 2 个 add 尚未开始）：hold 计数>0，弹窗保持、关闭按钮禁用
+    expect(cmd.holdCount).toBe(1);
     await exitWith(2, 0);
 
     await vi.waitFor(() => expect(added).toHaveBeenCalledTimes(1));
     expect(closed).toHaveBeenCalledTimes(1);
     expect(el!.textContent).not.toContain("部分模块添加失败");
+    // 序列结束（finally release）：计数归零，弹窗可手动关闭
+    expect(cmd.holdCount).toBe(0);
   });
 });

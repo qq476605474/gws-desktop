@@ -20,7 +20,7 @@ async function pull() {
   if (title.value) args.push("--title", title.value);
   submitting.value = true;
   try {
-    const run = await cmd.exec(`gws get ${branch.value}`, args, hub.path);
+    const run = await cmd.execDialog(`gws get ${branch.value}`, args, hub.path);
     emit("close");
     // 同 NewWorkspaceDialog：等命令结束再通知刷新；瞬间结束的命令现值已是终态，须先查现值
     if (run.state === "done" || run.state === "failed") {

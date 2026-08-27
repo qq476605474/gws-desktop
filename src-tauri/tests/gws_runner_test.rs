@@ -266,7 +266,7 @@ fn stream_e2e_output_exit_replay() {
 
     // run_gws_stream 契约：spawn + 编排完成后立即返回 runId，不等进程退出
     let started = Instant::now();
-    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap()).unwrap();
+    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), None).unwrap();
     assert!(
         started.elapsed() < Duration::from_millis(500),
         "run_gws_stream 应立即返回，实际耗时 {:?}",
@@ -301,7 +301,7 @@ fn stream_e2e_confirm_kill() {
     // read 是 bash 内建：阻塞等 stdin，无 stdout 输出 → 触发 watchdog 确认
     let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nread line\necho \"got:$line\"\n");
 
-    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap()).unwrap();
+    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), None).unwrap();
     let log = attach(handle, run_id);
     replay_output(handle.clone(), run_id).unwrap();
 
@@ -310,6 +310,7 @@ fn stream_e2e_confirm_kill() {
         log.lock().unwrap().confirm.clone()
     });
     assert!(question.contains("等待确认"), "question: {question}");
+    assert!(question.contains("1.5s"), "默认超时文案应含 1.5s: {question}");
 
     // 拒绝 → 后端 kill 子进程
     respond_confirm(run_id, false).unwrap();
@@ -319,6 +320,63 @@ fn stream_e2e_confirm_kill() {
     });
     assert_eq!(exit, None, "被 kill 的进程 exit code 应为 null");
 
+    assert!(!lock_runs().contains_key(&run_id), "exit 送达后 run 应被清理");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 自定义长超时：200ms 静默 + 5s 超时 → 不误发 confirm。
+/// 复现慢命令形态（sync 的静默 git 阶段 / repo add 的 clone）：静默远超默认 1.5s。
+#[test]
+fn stream_e2e_long_custom_timeout_no_false_confirm() {
+    let app = tauri::test::mock_app();
+    let handle = app.app_handle();
+    let dir = temp_dir("e2e_timeout_long");
+    let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nsleep 0.2\necho done\n");
+
+    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), Some(5000)).unwrap();
+    let log = attach(handle, run_id);
+    replay_output(handle.clone(), run_id).unwrap();
+
+    let exit = wait_until("exit 事件", Duration::from_secs(10), || {
+        log.lock().unwrap().exit_code
+    });
+    assert_eq!(exit, Some(0));
+    // exit 送达后 Confirm 不可能再入队（与 Exit 的临界区互斥）→ 此刻无 confirm 即永无
+    assert!(
+        log.lock().unwrap().confirm.is_none(),
+        "200ms 静默 + 5s 超时不应误发 confirm，question: {:?}",
+        log.lock().unwrap().confirm
+    );
+    assert!(log.lock().unwrap().output.contains("done"));
+
+    assert!(!lock_runs().contains_key(&run_id), "exit 送达后 run 应被清理");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+/// 自定义短超时：静默 1s + 100ms 超时 → 发出 confirm 且文案带 "0.1s"。
+#[test]
+fn stream_e2e_short_custom_timeout_fires_confirm() {
+    let app = tauri::test::mock_app();
+    let handle = app.app_handle();
+    let dir = temp_dir("e2e_timeout_short");
+    // sleep 1s：静默期跨越 watchdog 首次轮询（250ms），保证 confirm 先于退出确定性发出
+    let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nsleep 1\necho done\n");
+
+    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), Some(100)).unwrap();
+    let log = attach(handle, run_id);
+    replay_output(handle.clone(), run_id).unwrap();
+
+    let question = wait_until("confirm 事件", Duration::from_secs(5), || {
+        log.lock().unwrap().confirm.clone()
+    });
+    assert!(question.contains("等待确认"), "question: {question}");
+    assert!(question.contains("0.1s"), "超时文案应参数化为 0.1s: {question}");
+
+    // 进程未被杀：自然退出 code 0（confirm 只是提示，不影响运行）
+    let exit = wait_until("exit 事件", Duration::from_secs(10), || {
+        log.lock().unwrap().exit_code
+    });
+    assert_eq!(exit, Some(0));
     assert!(!lock_runs().contains_key(&run_id), "exit 送达后 run 应被清理");
     fs::remove_dir_all(&dir).unwrap();
 }

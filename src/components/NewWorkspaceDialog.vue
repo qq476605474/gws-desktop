@@ -25,7 +25,7 @@ async function create() {
   if (customBranch.value) args.push("--branch", customBranch.value);
   submitting.value = true;
   try {
-    const run = await cmd.exec(`gws new ${name.value}`, args, hub.path);
+    const run = await cmd.execDialog(`gws new ${name.value}`, args, hub.path);
     emit("close");
     // 关闭弹窗但等命令结束后再通知刷新（watcher 在 await 后创建、不随组件卸载而停止，结束即自停）；
     // 命令若瞬间结束，exit 事件可先于 exec 的 promise 决议送达，此时现值已是终态、watcher 不会再触发，须先查现值

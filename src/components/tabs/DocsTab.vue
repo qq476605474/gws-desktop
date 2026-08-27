@@ -91,7 +91,7 @@ async function create() {
   }
   submitting.value = true;
   try {
-    const run = await cmd.exec(`gws doc new ${name}`, ["doc", "new", name], `${hub.path}/ws/${docsWs.value}`);
+    const run = await cmd.execDialog(`gws doc new ${name}`, ["doc", "new", name], `${hub.path}/ws/${docsWs.value}`);
     // exec 返回时命令仍在跑（事件流异步），须等终态再刷新，否则拿到的是旧列表
     await cmd.waitDone(run);
     if (run.state === "done") newFile.value = ""; // 失败保留输入便于重试
@@ -107,7 +107,7 @@ async function create() {
 async function push(file: string) {
   if (cmd.isRunning()) return; // 按钮禁用渲染有间隙，入口再拦一道
   try {
-    const run = await cmd.exec(`gws doc push ${file}`, ["doc", "push", file], `${hub.path}/ws/${docsWs.value}`);
+    const run = await cmd.execDialog(`gws doc push ${file}`, ["doc", "push", file], `${hub.path}/ws/${docsWs.value}`);
     await cmd.waitDone(run);
   } catch (e) {
     // 同 create：错误进展示位，仍刷新
@@ -119,7 +119,7 @@ async function push(file: string) {
 async function commit() {
   if (cmd.isRunning()) return;
   try {
-    const run = await cmd.exec("gws doc commit", ["doc", "commit"], `${hub.path}/ws/${docsWs.value}`);
+    const run = await cmd.execDialog("gws doc commit", ["doc", "commit"], `${hub.path}/ws/${docsWs.value}`);
     await cmd.waitDone(run);
   } catch (e) {
     // 同 create：错误进展示位，仍刷新
@@ -164,7 +164,7 @@ onMounted(refresh);
     <!-- 对齐 WorkspaceDetail：仅在无数据且无错误时才显示加载中/空态（err 时上方错误行已给出原因与重试） -->
     <p v-else-if="!err && !hub.error && loading" class="muted">加载中…</p>
     <p v-else-if="!err && !hub.error" class="muted">（暂无文档——在当前工作区 gws doc new 创建）</p>
-    <p class="muted">上传依赖 GWS_DOC_UPLOADER 指向的脚本（未配置时 gws 会提示）。doc push 的输出见底部面板。</p>
+    <p class="muted">上传依赖 GWS_DOC_UPLOADER 指向的脚本（未配置时 gws 会提示）。doc push 的输出见命令弹窗。</p>
   </div>
 </template>
 

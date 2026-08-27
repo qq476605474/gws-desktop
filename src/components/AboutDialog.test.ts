@@ -12,7 +12,7 @@ type RunResult = { code: number | null; output: string };
 // vi.mock 工厂随 import 提升、早于本文件函数体执行，共享状态须经 vi.hoisted 创建以避免 TDZ
 const mocks = vi.hoisted(() => ({
   runGws: vi.fn<(args: string[], cwd: string) => Promise<RunResult>>(),
-  runGwsStream: vi.fn<(args: string[], cwd: string) => Promise<number>>(),
+  runGwsStream: vi.fn<(args: string[], cwd: string, confirmTimeoutMs?: number) => Promise<number>>(),
   respondConfirm: vi.fn<(runId: number, yes: boolean) => Promise<void>>(),
   replayOutput: vi.fn<(runId: number) => Promise<void>>(),
   latestGwsVersion: vi.fn<() => Promise<string>>(),
@@ -259,7 +259,7 @@ describe("AboutDialog 一键更新", () => {
     await vi.waitFor(() => expect(button("更新到 0.5.0")).toBeTruthy());
 
     clickButton("更新到 0.5.0");
-    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["update"], "/hub"));
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["update"], "/hub", 30000));
     // 宏任务 flush：exec 链（runGwsStream→listen→replayOutput）全是已决微任务，此刻已走完、
     // 而 exit 事件尚未发出——若无 waitDone，loadCurrent 已重查 version（第 2 次 runGws）
     await new Promise((r) => setTimeout(r, 0));
@@ -311,7 +311,7 @@ describe("AboutDialog 一键更新", () => {
     clickButton("更新到 0.5.0");
     await exitWith(1, 1); // 非零退出：state → failed
 
-    await vi.waitFor(() => expect(el!.textContent).toContain("gws update 未成功（详见输出面板）"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("gws update 未成功（详见命令弹窗）"));
     expect(el!.querySelector(".error")).toBeTruthy();
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenNthCalledWith(2, ["version"], "/hub")); // 仍重查版本
     expect(el!.textContent).toContain("0.4.2"); // current 保持旧版本
@@ -333,7 +333,7 @@ describe("AboutDialog 一键更新", () => {
     // 派发，只能靠入口守卫 updating 拦截（首击已同步置 updating=true）
     clickButton("更新到 0.5.0");
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
-    expect(mocks.runGwsStream).toHaveBeenCalledWith(["update"], "/hub");
+    expect(mocks.runGwsStream).toHaveBeenCalledWith(["update"], "/hub", 30000);
 
     await exitWith(1, 0);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(2)); // 恰一次更新后重查

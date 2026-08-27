@@ -13,6 +13,15 @@ const GWS_INSTALL_HINT: &str = "gws 未安装。安装: curl -fsSL https://raw.g
 const CONFIRM_SILENCE: Duration = Duration::from_millis(1500);
 const WATCHDOG_INTERVAL: Duration = Duration::from_millis(250);
 
+/// 确认超时的展示文案：整秒显示 "30s"，非整秒保留一位小数 "1.5s"。
+fn confirm_secs_text(silence: Duration) -> String {
+    if silence.as_millis() % 1000 == 0 {
+        format!("{}s", silence.as_millis() / 1000)
+    } else {
+        format!("{}s", silence.as_secs_f64())
+    }
+}
+
 #[derive(Serialize, Clone)]
 pub struct RunResult {
     pub code: Option<i32>,
@@ -251,14 +260,18 @@ pub fn run_gws(args: Vec<String>, cwd: String) -> Result<RunResult, String> {
 }
 
 /// 泛型 Runtime：生产走 Wry，集成测试可用 mock runtime 的 AppHandle 直调。
+/// confirm_timeout_ms：stdout 静默多久后发 gws-confirm（None → 默认 1500ms）。
+/// 慢命令（sync 的静默 git 阶段、repo add 的 clone）静默远超默认值，
+/// 由前端按命令传大值防假确认；真读 stdin 的命令（gws drop）保持默认。
 #[tauri::command]
 pub fn run_gws_stream<R: Runtime>(
     app: AppHandle<R>,
     args: Vec<String>,
     cwd: String,
+    confirm_timeout_ms: Option<u64>,
 ) -> Result<u32, String> {
     let exe = find_gws().ok_or_else(|| GWS_INSTALL_HINT.to_string())?;
-    spawn_stream(&app, &exe, &args, &cwd)
+    spawn_stream(&app, &exe, &args, &cwd, confirm_timeout_ms)
 }
 
 /// spawn + 事件编排。与命令入口拆开：集成测试直接传 mock 可执行文件路径，
@@ -268,6 +281,7 @@ pub fn spawn_stream<R: Runtime>(
     exe: &Path,
     args: &[String],
     cwd: &str,
+    confirm_timeout_ms: Option<u64>,
 ) -> Result<u32, String> {
     // 各后台线程要求 'static：入口处克隆出所有权句柄（exe/cwd 是函数体内消费掉的借用）
     let app = app.clone();
@@ -344,14 +358,17 @@ pub fn spawn_stream<R: Runtime>(
         });
     }
 
-    // watchdog：子进程 1.5s 无 stdout 输出且未退出 → 猜测在等 stdin 确认，
-    // 每次运行至多发一次 gws-confirm 事件。
+    // watchdog：子进程超时无 stdout 输出且未退出 → 猜测在等 stdin 确认，
+    // 每次运行至多发一次 gws-confirm 事件。超时按 run 可配置（confirm_timeout_ms）：
+    // 真读 stdin 的命令（gws drop）用默认 1.5s；慢命令由前端传大值防假确认。
     // 「确认未结束 + 记录 Confirm」在单次加锁内完成：否则 waiter 可能在
     // 检查与记录之间置 finished，Confirm 落到 Exit 之后（乱序或误发）。
     {
         let app = app.clone();
         let meta = meta.clone();
         let cwd = cwd.to_string();
+        let confirm_silence = confirm_timeout_ms.map(Duration::from_millis).unwrap_or(CONFIRM_SILENCE);
+        let secs_text = confirm_secs_text(confirm_silence);
         std::thread::spawn(move || loop {
             std::thread::sleep(WATCHDOG_INTERVAL);
             let over = {
@@ -364,13 +381,13 @@ pub fn spawn_stream<R: Runtime>(
             if over {
                 return;
             }
-            if meta.silent_for() < CONFIRM_SILENCE {
+            if meta.silent_for() < confirm_silence {
                 continue;
             }
             // 单次加锁：确认未结束才记录 Confirm（与 waiter 的 Exit 临界区互斥）
             let mut runs = lock_runs();
             if runs.get(&run_id).is_some_and(|st| !st.finished) {
-                let question = format!("gws 在 {cwd} 等待确认（1.5s 无输出）。确认继续？");
+                let question = format!("gws 在 {cwd} 等待确认（{secs_text} 无输出）。确认继续？");
                 push_event_locked(&mut runs, &app, run_id, PendingEvent::Confirm(question));
             }
             return;
@@ -438,6 +455,14 @@ pub fn respond_confirm(run_id: u32, yes: bool) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirm_secs_text_formats_whole_and_fractional_seconds() {
+        assert_eq!(confirm_secs_text(Duration::from_millis(1500)), "1.5s");
+        assert_eq!(confirm_secs_text(Duration::from_millis(100)), "0.1s");
+        assert_eq!(confirm_secs_text(Duration::from_millis(30000)), "30s");
+        assert_eq!(confirm_secs_text(Duration::from_millis(5000)), "5s");
+    }
 
     #[test]
     fn ascii_passes_through_in_small_chunks() {

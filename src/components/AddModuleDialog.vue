@@ -16,13 +16,16 @@ async function add() {
   if (submitting.value) return;
   submitting.value = true;
   err.value = "";
+  // 整段序列持有命令弹窗（hold 计数>0 时关闭禁用）：逐模块 add 期间弹窗不消失，
+  // 避免模块间隙弹窗被关掉后后续命令无输出可见；release 放 finally 保证异常路径也释放
+  cmd.holdDialog();
   const failed: string[] = [];
   try {
     const total = selected.value.length;
     for (let i = 0; i < total; i++) {
       const m = selected.value[i];
       progress.value = `正在添加 ${m}（${i + 1}/${total}）…`;
-      const run = await cmd.exec(`gws add ${m}`, ["add", m], props.wsPath);
+      const run = await cmd.execDialog(`gws add ${m}`, ["add", m], props.wsPath);
       await cmd.waitDone(run); // 逐个等结束，避免并发 worktree 操作
       // 模块间独立：单个失败不中断循环，继续尝试后续模块
       if (run.state !== "done") failed.push(m);
@@ -30,7 +33,7 @@ async function add() {
     if (failed.length) {
       // 部分失败：不 emit added、不关弹窗（列表刷新留给用户重试成功或手动取消后）；
       // 从 selected 剔除已成功项，弹窗停留在失败项上，用户可直接重试
-      err.value = `部分模块添加失败：${failed.join("、")}（详见输出面板）`;
+      err.value = `部分模块添加失败：${failed.join("、")}（详见命令弹窗）`;
       selected.value = failed;
       return;
     }
@@ -39,6 +42,7 @@ async function add() {
   } catch (e) {
     err.value = String(e);
   } finally {
+    cmd.releaseDialog();
     submitting.value = false;
   }
 }

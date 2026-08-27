@@ -5,7 +5,6 @@ import WorkspacesTab from "../components/tabs/WorkspacesTab.vue";
 import ReposTab from "../components/tabs/ReposTab.vue";
 import EnvsTab from "../components/tabs/EnvsTab.vue";
 import DocsTab from "../components/tabs/DocsTab.vue";
-import OutputPanel from "../components/OutputPanel.vue";
 import AboutDialog from "../components/AboutDialog.vue";
 import SettingsDialog from "../components/SettingsDialog.vue";
 
@@ -23,7 +22,6 @@ const showSettings = ref(false);
       <EnvsTab v-else-if="tab === 'envs'" />
       <DocsTab v-else />
     </div>
-    <OutputPanel />
     <AboutDialog v-if="showAbout" @close="showAbout = false" />
     <SettingsDialog v-if="showSettings" @close="showSettings = false" />
   </div>

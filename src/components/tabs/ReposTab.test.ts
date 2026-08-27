@@ -12,7 +12,7 @@ type RunResult = { code: number | null; output: string };
 // vi.mock 工厂随 import 提升、早于本文件函数体执行，共享状态须经 vi.hoisted 创建以避免 TDZ
 const mocks = vi.hoisted(() => ({
   runGws: vi.fn<(args: string[], cwd: string) => Promise<RunResult>>(),
-  runGwsStream: vi.fn<(args: string[], cwd: string) => Promise<number>>(),
+  runGwsStream: vi.fn<(args: string[], cwd: string, confirmTimeoutMs?: number) => Promise<number>>(),
   respondConfirm: vi.fn<(runId: number, yes: boolean) => Promise<void>>(),
   replayOutput: vi.fn<(runId: number) => Promise<void>>(),
   openInFinder: vi.fn<(path: string) => Promise<void>>(),
@@ -128,6 +128,7 @@ describe("ReposTab", () => {
     expect(mocks.runGwsStream).toHaveBeenCalledWith(
       ["repo", "add", "https://git.example.com/a.git", "https://git.example.com/b.git"],
       "/hub",
+      30000,
     );
 
     // 负向断言：exit 事件未发出、命令未到终态前不得提前 refreshAll（锁死 waitDone→refreshAll 时序）
@@ -179,7 +180,7 @@ describe("ReposTab", () => {
     mountTab();
     clickButton("移除");
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["repo", "rm", "order-service"], "/hub"),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["repo", "rm", "order-service"], "/hub", 30000),
     );
     await exitWith(1, 0);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
@@ -197,6 +198,7 @@ describe("ReposTab", () => {
     expect(mocks.runGwsStream).toHaveBeenCalledWith(
       ["repo", "add", "https://git.example.com/a.git"],
       "/hub",
+      30000,
     );
 
     await exitWith(1, 0);

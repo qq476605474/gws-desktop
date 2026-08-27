@@ -16,7 +16,7 @@ async function addEnv() {
   if (!name) return;
   submitting.value = true;
   try {
-    const run = await cmd.exec(`gws env add ${name}`, ["env", "add", name], hub.path);
+    const run = await cmd.execDialog(`gws env add ${name}`, ["env", "add", name], hub.path);
     // exec 返回时命令仍在跑（事件流异步），须等终态再刷新，否则拿到的是旧列表
     await cmd.waitDone(run);
     if (run.state === "done") newEnv.value = ""; // 失败保留输入便于重试
@@ -39,7 +39,7 @@ async function rmEnv(e: string) {
   if (!ok) return;
   if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令
   try {
-    const run = await cmd.exec(`gws env rm ${e}`, ["env", "rm", e], hub.path);
+    const run = await cmd.execDialog(`gws env rm ${e}`, ["env", "rm", e], hub.path);
     await cmd.waitDone(run);
   } catch {
     // 同 addEnv：吞 reject，仍刷新
@@ -51,7 +51,7 @@ async function sync() {
   if (submitting.value) return; // 同 addEnv：防本地在途时重复提交
   submitting.value = true;
   try {
-    const run = await cmd.exec("gws sync", ["sync"], hub.path);
+    const run = await cmd.execDialog("gws sync", ["sync"], hub.path);
     await cmd.waitDone(run);
   } catch {
     // 同 addEnv：吞 reject，仍刷新

@@ -7,7 +7,7 @@ type Handler = (e: { payload: Payload }) => void;
 // vi.mock 工厂随 import 提升、早于本文件函数体执行，
 // 共享状态必须经 vi.hoisted 创建以避免 TDZ。
 const mocks = vi.hoisted(() => ({
-  runGwsStream: vi.fn<(args: string[], cwd: string) => Promise<number>>().mockResolvedValue(1),
+  runGwsStream: vi.fn<(args: string[], cwd: string, confirmTimeoutMs?: number) => Promise<number>>().mockResolvedValue(1),
   respondConfirm: vi.fn<(runId: number, yes: boolean) => Promise<void>>().mockResolvedValue(undefined),
   replayOutput: vi.fn<(runId: number) => Promise<void>>().mockResolvedValue(undefined),
   /** 按事件名保存 listen 注册的 handler，测试中手动触发以模拟事件流 */
@@ -48,7 +48,7 @@ describe("cmd store 状态机", () => {
   it("exec 后 current 为 running、output 为空", async () => {
     const store = useCmdStore();
     const run = await store.exec("gws ls", ["ls"], "/hub");
-    expect(mocks.runGwsStream).toHaveBeenCalledWith(["ls"], "/hub");
+    expect(mocks.runGwsStream).toHaveBeenCalledWith(["ls"], "/hub", undefined);
     // 订阅完成后必须通知后端回放缓存事件（先订阅后回放的契约）
     expect(mocks.replayOutput).toHaveBeenCalledTimes(1);
     expect(mocks.replayOutput).toHaveBeenCalledWith(RUN_ID);
@@ -181,5 +181,62 @@ describe("cmd store 状态机", () => {
     const settled = await store.waitDone(run);
     expect(settled).toBe(run);
     expect(settled.state).toBe("failed");
+  });
+
+  it("exec opts 透传：confirmTimeoutMs 传给 runGwsStream 第三参", async () => {
+    const store = useCmdStore();
+    await store.exec("gws drop mod", ["drop", "mod"], "/hub", { confirmTimeoutMs: 1500 });
+    expect(mocks.runGwsStream).toHaveBeenCalledWith(["drop", "mod"], "/hub", 1500);
+  });
+});
+
+describe("cmd store 弹窗执行（execDialog/closeDialog/holdDialog）", () => {
+  it("execDialog 默认 confirmTimeoutMs=30000，dialogRun 指向该 run", async () => {
+    const store = useCmdStore();
+    const run = await store.execDialog("gws sync", ["sync"], "/hub");
+    expect(mocks.runGwsStream).toHaveBeenCalledWith(["sync"], "/hub", 30000);
+    expect(store.dialogRun).toBe(run);
+    expect(store.dialogRun?.label).toBe("gws sync");
+    expect(store.current).toBe(run); // exec 复用：current 同步指向（ConfirmDialog/守卫等仍可用）
+  });
+
+  it("execDialog 显式覆盖 confirmTimeoutMs（如 gws drop 传 1500）", async () => {
+    const store = useCmdStore();
+    await store.execDialog("gws drop mod", ["drop", "mod"], "/hub", { confirmTimeoutMs: 1500 });
+    expect(mocks.runGwsStream).toHaveBeenCalledWith(["drop", "mod"], "/hub", 1500);
+  });
+
+  it("closeDialog 清空 dialogRun；再次 execDialog 重新设置", async () => {
+    const store = useCmdStore();
+    const run1 = await store.execDialog("gws sync", ["sync"], "/hub");
+    expect(store.dialogRun).toBe(run1);
+    store.closeDialog();
+    expect(store.dialogRun).toBeNull();
+
+    mocks.runGwsStream.mockResolvedValueOnce(2);
+    const run2 = await store.execDialog("gws pull", ["pull"], "/hub");
+    expect(store.dialogRun).toBe(run2);
+    expect(store.dialogRun).not.toBe(run1); // 弹窗内容切换到新 run
+  });
+
+  it("execDialog 不影响 exec：普通 exec 不设置 dialogRun", async () => {
+    const store = useCmdStore();
+    await store.exec("gws ls", ["ls"], "/hub");
+    expect(store.dialogRun).toBeNull();
+  });
+
+  it("holdDialog 计数：多次 hold/release 成对递减，release 到 0 不下穿", async () => {
+    const store = useCmdStore();
+    expect(store.holdCount).toBe(0);
+    store.holdDialog();
+    store.holdDialog();
+    expect(store.holdCount).toBe(2);
+    store.releaseDialog();
+    expect(store.holdCount).toBe(1);
+    store.releaseDialog();
+    expect(store.holdCount).toBe(0);
+    // 防御：多余 release 不得把计数打成 -1
+    store.releaseDialog();
+    expect(store.holdCount).toBe(0);
   });
 });

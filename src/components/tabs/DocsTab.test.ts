@@ -12,7 +12,7 @@ type RunResult = { code: number | null; output: string };
 // vi.mock 工厂随 import 提升、早于本文件函数体执行，共享状态须经 vi.hoisted 创建以避免 TDZ
 const mocks = vi.hoisted(() => ({
   runGws: vi.fn<(args: string[], cwd: string) => Promise<RunResult>>(),
-  runGwsStream: vi.fn<(args: string[], cwd: string) => Promise<number>>(),
+  runGwsStream: vi.fn<(args: string[], cwd: string, confirmTimeoutMs?: number) => Promise<number>>(),
   respondConfirm: vi.fn<(runId: number, yes: boolean) => Promise<void>>(),
   replayOutput: vi.fn<(runId: number) => Promise<void>>(),
   openInFinder: vi.fn<(path: string) => Promise<void>>(),
@@ -190,7 +190,7 @@ describe("DocsTab.refresh", () => {
     // 行内"上传"的 cwd 用 docsWs（旧工作区）——旧文件不会 push 到新工作区
     clickButton("上传");
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp"),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp", 30000),
     );
     await exitWith(1, 0);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(3)); // 挂载 + 切换 + 命令后刷新
@@ -322,7 +322,7 @@ describe("DocsTab 命令操作", () => {
     await nextTick();
     clickButton("+ 新建文档");
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "new", "技术方案v2.md"], "/hub/ws/checkout-revamp"),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "new", "技术方案v2.md"], "/hub/ws/checkout-revamp", 30000),
     );
     // 负向断言：exit 事件未发出、命令未到终态前不得提前 refresh（runGws 已清计数）
     expect(mocks.runGws).not.toHaveBeenCalled();
@@ -343,7 +343,7 @@ describe("DocsTab 命令操作", () => {
     await nextTick();
     clickButton("+ 新建文档");
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "new", "排期v2.md"], "/hub/ws/checkout-revamp"),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "new", "排期v2.md"], "/hub/ws/checkout-revamp", 30000),
     );
     await exitWith(1, 1); // doc new 失败
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
@@ -406,7 +406,7 @@ describe("DocsTab 命令操作", () => {
 
     clickButton("上传"); // 首行 技术方案.md
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp"),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp", 30000),
     );
     expect(mocks.runGws).not.toHaveBeenCalled(); // 终态前不刷新
 
@@ -421,7 +421,7 @@ describe("DocsTab 命令操作", () => {
     mocks.runGws.mockClear();
 
     clickButton("commit 全部文档");
-    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "commit"], "/hub/ws/checkout-revamp"));
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "commit"], "/hub/ws/checkout-revamp", 30000));
     expect(mocks.runGws).not.toHaveBeenCalled(); // 终态前不刷新
 
     await exitWith(1, 0);

@@ -16,7 +16,7 @@ async function addRepos() {
   if (!urls.length) return;
   submitting.value = true;
   try {
-    const run = await cmd.exec("gws repo add", ["repo", "add", ...urls], hub.path);
+    const run = await cmd.execDialog("gws repo add", ["repo", "add", ...urls], hub.path);
     // exec 返回时命令仍在跑（事件流异步），须等终态再刷新，否则拿到的是旧列表
     await cmd.waitDone(run);
     if (run.state === "done") input.value = ""; // 失败保留输入便于重试
@@ -39,7 +39,7 @@ async function rm(name: string) {
   if (!ok) return;
   if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令
   try {
-    const run = await cmd.exec(`gws repo rm ${name}`, ["repo", "rm", name], hub.path);
+    const run = await cmd.execDialog(`gws repo rm ${name}`, ["repo", "rm", name], hub.path);
     await cmd.waitDone(run);
   } catch {
     // 同 addRepos：吞 reject，仍刷新

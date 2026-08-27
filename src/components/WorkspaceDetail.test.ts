@@ -11,7 +11,7 @@ type RunResult = { code: number | null; output: string };
 
 const mocks = vi.hoisted(() => ({
   runGws: vi.fn<(args: string[], cwd: string) => Promise<RunResult>>(),
-  runGwsStream: vi.fn<(args: string[], cwd: string) => Promise<number>>(),
+  runGwsStream: vi.fn<(args: string[], cwd: string, confirmTimeoutMs?: number) => Promise<number>>(),
   respondConfirm: vi.fn<(runId: number, yes: boolean) => Promise<void>>(),
   replayOutput: vi.fn<(runId: number) => Promise<void>>(),
   openInFinder: vi.fn<(path: string) => Promise<void>>(),
@@ -151,5 +151,49 @@ describe("WorkspaceDetail.refresh 错误处理与并发守卫", () => {
     expect(el!.textContent).toContain("new-mod");
     expect(el!.textContent).not.toContain("old-mod");
     expect(el!.textContent).not.toContain("重试");
+  });
+});
+
+describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
+  function clickText(text: string) {
+    const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === text);
+    if (!btn) throw new Error(`按钮「${text}」未找到`);
+    btn.click();
+  }
+
+  /** 先让 st 表格渲染出来（refresh 就绪），再触发命令按钮 */
+  async function mountReady() {
+    mountDetail();
+    mocks.runGwsStream.mockResolvedValue(1);
+    mocks.replayOutput.mockResolvedValue(undefined);
+    pending[0]!.resolve({ code: 0, output: stOut("order-service") });
+    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
+  }
+
+  it("doCmd 走 execDialog：默认 confirmTimeoutMs=30000（慢命令防假确认）", async () => {
+    await mountReady();
+    clickText("Pull");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["pull"], "/hub/ws/demo", 30000),
+    );
+  });
+
+  it("gws drop 单独传 confirmTimeoutMs=1500（GUI 下唯一真读 stdin 的命令）", async () => {
+    await mountReady();
+    clickText("移除");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["drop", "order-service"], "/hub/ws/demo", 1500),
+    );
+  });
+
+  it("removeWs 走 execDialog：gws rm 于 hub.path、默认 30000", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(true);
+    await mountReady();
+    clickText("删除工作区");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["rm", "demo", "--force"], "/hub", 30000),
+    );
   });
 });
