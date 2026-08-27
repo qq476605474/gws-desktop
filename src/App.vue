@@ -7,6 +7,7 @@ import StartupView from "./views/StartupView.vue";
 import MainView from "./views/MainView.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import CmdDialog from "./components/CmdDialog.vue";
+import ToastList from "./components/ToastList.vue";
 
 const settings = useSettingsStore();
 // WHY ready 门控：子组件 onMounted 先于父组件的异步 init 完成，直接渲染会让 StartupView 读到空 lastHub，上次 hub 自动进入失效
@@ -26,6 +27,7 @@ onMounted(async () => {
   <div v-if="busyCount > 0" class="busy-mask"><span class="busy-spinner"></span>加载中…</div>
   <CmdDialog />
   <ConfirmDialog />
+  <ToastList />
 </template>
 
 <style scoped>

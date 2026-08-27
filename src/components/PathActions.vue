@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { openInFinder, openInTerminal, copyText } from "../lib/gws-bridge";
+import { toast } from "../lib/toast";
 import { useSettingsStore } from "../stores/settings";
 
 const props = defineProps<{ path: string }>();
 const settings = useSettingsStore();
-async function copy() { await copyText(props.path); }
+async function copy() {
+  await copyText(props.path);
+  toast("已复制路径");
+}
 async function finder() { await openInFinder(props.path); }
 async function terminal() {
   await openInTerminal(props.path, settings.terminal === "system" ? null : settings.terminal);

@@ -1,9 +1,25 @@
 <script setup lang="ts">
+import { nextTick, ref, watch } from "vue";
 import { useCmdStore } from "../stores/cmd";
 import { respondConfirm } from "../lib/gws-bridge";
 import { ansiToHtml } from "../lib/ansi";
 
 const cmd = useCmdStore();
+const pre = ref<HTMLPreElement | null>(null);
+
+// 输出增长时自动滚到底：贴底跟随——用户上滚阅读旧输出时不强拉，
+// 只有停在底部附近（≤40px）才继续跟随新输出
+watch(
+  () => cmd.dialogRun?.output,
+  async () => {
+    await nextTick();
+    const el = pre.value;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= 40) {
+      el.scrollTop = el.scrollHeight;
+    }
+  },
+);
 
 /** 终止运行中的命令（持续输出型命令的逃生口）：respondConfirm(id,false) 在 Rust 侧
  *  走 kill 分支（不依赖是否真有 pending confirm），被杀进程 exit code 为 null →
@@ -33,7 +49,7 @@ async function terminate() {
           <template v-else><span class="spinner"></span>执行中…</template>
         </span>
       </header>
-      <pre v-html="ansiToHtml(cmd.dialogRun.output)"></pre>
+      <pre ref="pre" v-html="ansiToHtml(cmd.dialogRun.output)"></pre>
       <footer>
         <button v-if="cmd.dialogRun.state === 'running' || cmd.dialogRun.state === 'confirm'"
                 class="danger" @click="terminate">终止</button>

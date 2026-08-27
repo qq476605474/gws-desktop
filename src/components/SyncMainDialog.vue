@@ -1,14 +1,17 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 
 /** defaultFrom：来源预填值（当前无法得知工作区创建时基线，一般不传） */
 const props = defineProps<{ defaultFrom?: string }>();
 const emit = defineEmits<{ (e: "close"): void; (e: "run", from: string): void }>();
 const from = ref(props.defaultFrom ?? "");
+/** 多来源归一：gws 的 --from 值支持逗号分隔链（resolve_chain_base 按逗号拆、
+ *  顺序即优先级、全不存在自动兜底主干）；空格/逗号输入统一拼成 a,b */
+const fromValue = computed(() => from.value.split(/[\s,]+/).filter(Boolean).join(","));
 
 function start() {
-  // 纯空格视同留空（创建时基线）：不 trim 会把 --from "  " 传给 gws 导致 rev-parse 失败
-  emit("run", from.value.trim());
+  // 纯空格视同留空（创建时基线）：不归一会把 --from "  " 传给 gws 导致 rev-parse 失败
+  emit("run", fromValue.value);
   emit("close");
 }
 </script>
@@ -17,8 +20,8 @@ function start() {
   <div class="mask" @click.self="emit('close')">
     <div class="dialog">
       <h3>同步最新代码</h3>
-      <p class="muted">把远程基线最新提交合进当前工作区分支</p>
-      <label>来源 <input v-model="from" autocapitalize="off" spellcheck="false" placeholder="来源分支/ref，留空 = 创建时基线（默认主干）" /></label>
+      <p class="muted">把远程基线最新提交合进当前需求分支</p>
+      <label>来源 <input v-model="from" autocapitalize="off" spellcheck="false" placeholder="来源/ref，可多个（空格/逗号分隔，按优先级取），留空 = 创建时基线" /></label>
       <div class="actions">
         <button @click="emit('close')">取消</button>
         <button class="primary" @click="start">开始同步</button>

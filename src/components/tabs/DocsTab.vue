@@ -10,6 +10,7 @@ import { confirm } from "@tauri-apps/plugin-dialog";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
 import { runGws, openPath, copyText } from "../../lib/gws-bridge";
+import { toast } from "../../lib/toast";
 import { stripAnsi } from "../../lib/ansi";
 import { parseDocDir, parseDocLs, parseLs, type DocEntry } from "../../lib/parse";
 import PathActions from "../PathActions.vue";
@@ -84,7 +85,7 @@ async function refresh() {
     // ws 模式合法 docdir 恒为 <日期>-<名> 格式，命中哨兵视为异常、不更新数据；
     // hub 模式（cwd 就在 hub 根）首行恒为 "docs"，属正常态，不在此拦截
     if (target !== HUB_ROOT && dir === "docs") {
-      err.value = "当前目录不是有效的工作区（gws 返回了 hub 级文档列表）";
+      err.value = "当前目录不是有效的需求（gws 返回了 hub 级文档列表）";
       return;
     }
     err.value = "";
@@ -180,6 +181,7 @@ async function commit() {
  *  访达/终端是目录级操作，收敛到上方文档目录行（用户反馈 #10） */
 async function copyFile(file: string) {
   await copyText(filePath(file));
+  toast("已复制路径");
 }
 
 /** 点文档名 → 系统默认应用打开（如 Typora/VS Code）：自带查看器界面简陋，弃用 */
@@ -237,7 +239,7 @@ onMounted(refresh);
     </table>
     <!-- 对齐 WorkspaceDetail：仅在无数据且无错误时才显示加载中/空态（err 时上方错误行已给出原因与重试） -->
     <p v-else-if="!err && !hub.error && loading" class="muted">加载中…</p>
-    <p v-else-if="!err && !hub.error" class="muted">{{ isHubData ? "（暂无文档）" : "（暂无文档——在当前工作区 gws doc new 创建）" }}</p>
+    <p v-else-if="!err && !hub.error" class="muted">{{ isHubData ? "（暂无文档）" : "（暂无文档——在当前需求 gws doc new 创建）" }}</p>
     <p class="muted">上传依赖 GWS_DOC_UPLOADER 指向的脚本（未配置时 gws 会提示）。doc push 的输出见命令弹窗。</p>
   </div>
 </template>

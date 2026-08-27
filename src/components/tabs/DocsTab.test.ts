@@ -232,7 +232,7 @@ describe("DocsTab.refresh", () => {
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
 
     switchWs("login-crash");
-    await vi.waitFor(() => expect(el!.textContent).toContain("当前目录不是有效的工作区"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("当前目录不是有效的需求"));
     expect(el!.querySelectorAll("tbody tr").length).toBe(2); // 假列表不进表格，旧数据保留
     expect(el!.textContent).toContain("技术方案.md");
     expect(el!.textContent).not.toContain("README.md");
@@ -272,7 +272,7 @@ describe("DocsTab.refresh", () => {
     mountTab([]);
 
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
-    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档——在当前工作区 gws doc new 创建）"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档——在当前需求 gws doc new 创建）"));
     expect(el!.querySelector("table")).toBeNull();
     expect(el!.querySelector(".error")).toBeNull();
     expect(mocks.runGws).toHaveBeenCalledTimes(1); // ls 兜底后无目标，不发 doc ls
@@ -283,7 +283,7 @@ describe("DocsTab.refresh", () => {
     mountTab([]);
 
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
-    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档——在当前工作区 gws doc new 创建）"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档——在当前需求 gws doc new 创建）"));
     expect(el!.querySelector(".error")).toBeNull(); // 不额外报错
     expect(mocks.runGws).toHaveBeenCalledTimes(1);
   });
@@ -679,7 +679,7 @@ describe("DocsTab 目录行与文件复制", () => {
 
     await vi.waitFor(() => expect(el!.querySelector(".group-row")).toBeTruthy());
     expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp");
-    expect(el!.textContent).toContain("（暂无文档——在当前工作区 gws doc new 创建）");
+    expect(el!.textContent).toContain("（暂无文档——在当前需求 gws doc new 创建）");
     expect(el!.querySelector("table")).toBeNull();
   });
 });

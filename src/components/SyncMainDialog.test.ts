@@ -42,7 +42,7 @@ describe("SyncMainDialog", () => {
   it("渲染：标题、说明行、from 输入框（placeholder 写明留空=创建时基线）", () => {
     mountDialog();
     expect(el!.textContent).toContain("同步最新代码");
-    expect(el!.textContent).toContain("把远程基线最新提交合进当前工作区分支");
+    expect(el!.textContent).toContain("把远程基线最新提交合进当前需求分支");
     expect(fromInput().placeholder).toContain("留空 = 创建时基线");
     expect(fromInput().value).toBe("");
   });
@@ -60,6 +60,34 @@ describe("SyncMainDialog", () => {
     clickButton("开始同步");
     expect(run).toHaveBeenCalledWith("release-2.0");
     expect(close).toHaveBeenCalledTimes(1);
+  });
+
+  // gws 的 --from 值支持逗号分隔链（resolve_chain_base 按优先级取第一个存在的远端 ref）：
+  // GUI 归一空格/逗号输入，与 NewWorkspaceDialog 的基线来源输入一致
+  it("多来源归一：空格/逗号分隔输入都拼成 a,b（顺序即优先级）", async () => {
+    const { run } = mountDialog();
+    fromInput().value = "阶段2 阶段1";
+    fromInput().dispatchEvent(new Event("input"));
+    await nextTick();
+    clickButton("开始同步");
+    expect(run).toHaveBeenCalledWith("阶段2,阶段1");
+  });
+
+  it("多来源归一：逗号分隔与混合分隔同效；纯空格视同留空", async () => {
+    const { run } = mountDialog();
+    fromInput().value = "阶段2, 阶段1";
+    fromInput().dispatchEvent(new Event("input"));
+    await nextTick();
+    clickButton("开始同步");
+    expect(run).toHaveBeenCalledWith("阶段2,阶段1");
+
+    const again = mountDialog();
+    again.run.mockClear();
+    el!.querySelector<HTMLInputElement>("input")!.value = "   ";
+    el!.querySelector<HTMLInputElement>("input")!.dispatchEvent(new Event("input"));
+    await nextTick();
+    clickButton("开始同步");
+    expect(again.run).toHaveBeenCalledWith("");
   });
 
   it("留空直接开始同步：run 带空串（默认创建时基线）", () => {
