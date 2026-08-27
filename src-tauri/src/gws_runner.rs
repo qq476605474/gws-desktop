@@ -259,9 +259,26 @@ pub fn run_gws_once(exe: &Path, args: &[String], cwd: &Path) -> RunResult {
 
 pub fn find_gws() -> Option<PathBuf> {
     let name = if cfg!(windows) { "gws.exe" } else { "gws" };
-    std::env::var_os("PATH").and_then(|path| {
-        std::env::split_paths(&path).map(|dir| dir.join(name)).find(|candidate| candidate.is_file())
-    })
+    // GUI 从 Finder/Dock 启动不继承交互 shell 的 PATH（.zshrc 等未加载），
+    // ~/.local/bin 这类用户安装位常不在其中——先查 PATH，再按常见安装位兜底
+    if let Some(path) = std::env::var_os("PATH") {
+        if let Some(found) = std::env::split_paths(&path)
+            .map(|dir| dir.join(name))
+            .find(|candidate| candidate.is_file())
+        {
+            return Some(found);
+        }
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    [
+        home.join(".local/bin"),
+        home.join("bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from("/opt/homebrew/bin"),
+    ]
+    .into_iter()
+    .map(|dir| dir.join(name))
+    .find(|candidate| candidate.is_file())
 }
 
 /// (async)：阻塞至子进程退出，须在主线程外执行（sync fn + async 标记 → 线程池）。

@@ -32,7 +32,7 @@ async function switchHub() {
 
 <template>
   <header class="topbar">
-    <span class="brand">GWS Desk</span>
+    <span class="brand">GwsDesk</span>
     <button @click="switchHub">{{ hub.path || "选择 Hub" }} ▾</button>
     <nav>
       <button :class="{ active: tab === 'ws' }" @click="emit('update:tab', 'ws')">工作区</button>

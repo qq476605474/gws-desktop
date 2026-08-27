@@ -37,7 +37,7 @@ onMounted(async () => {
 
 <template>
   <main class="startup">
-    <h1>GWS Desk</h1>
+    <h1>GwsDesk</h1>
     <p v-if="!installed" class="warn">
       未检测到 gws 命令。安装：
       <code>curl -fsSL https://raw.githubusercontent.com/qq476605474/gws/main/gws -o ~/.local/bin/gws && chmod +x ~/.local/bin/gws</code>
