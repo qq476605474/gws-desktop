@@ -275,6 +275,28 @@ describe("cmd store execDialog 失败展示（invoke reject 合成 failed run）
     expect(mocks.handlers.size).toBe(0);
     expect(mocks.replayOutput).not.toHaveBeenCalled();
   });
+
+  it("listen 失败（run 已创建）：current 一并置终态解锁，isRunning=false、closeDialog 可关", async () => {
+    // runGwsStream 成功返回 runId（真实 run 已创建、current 指向它），
+    // 但首个 listen 注册 reject——exec 拆掉监听后 rethrow，再无 exit 事件自愈
+    const { listen } = await import("@tauri-apps/api/event");
+    vi.mocked(listen).mockImplementationOnce(async () => {
+      throw new Error("订阅失败");
+    });
+    const store = useCmdStore();
+    await expect(store.execDialog("gws sync", ["sync"], "/hub")).rejects.toThrow("订阅失败");
+    // 真实 run 仍在 current 上（区别于 runGwsStream 失败的 current=null），但已是终态
+    expect(store.current).not.toBeNull();
+    expect(store.current?.state).toBe("failed");
+    expect(store.current?.code).toBeNull();
+    expect(store.current?.output).toContain("订阅失败");
+    expect(store.isRunning()).toBe(false); // 否则 CmdDialog 关闭按钮永久禁用、应用锁死
+    // 合成 dialogRun 逻辑保留：展示失败原因，且可手动关闭
+    expect(store.dialogRun?.id).toBe(-1);
+    expect(store.dialogRun?.state).toBe("failed");
+    store.closeDialog();
+    expect(store.dialogRun).toBeNull();
+  });
 });
 
 describe("cmd store 监听器生命周期（run 终态后拆除，防长会话泄漏）", () => {

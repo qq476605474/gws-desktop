@@ -151,6 +151,23 @@ describe("NewWorkspaceDialog", () => {
     expect(el!.querySelector(".dialog")).toBeTruthy();
   });
 
+  it("submitting 期间点 mask/取消不关窗（防 IPC 间隙卸载致 created 通知丢失）", async () => {
+    mountDialog();
+    setInput(0, "demo");
+    await clickCreate();
+    // 命令在途（无 exit 事件 → waitDone 挂起、submitting=true）：
+    // 此窗口内一次 mask 点击/取消即可卸载组件，终态后 emit("created") 变 no-op
+    expect(mocks.runGwsStream).toHaveBeenCalledTimes(1);
+    (el!.querySelector(".mask") as HTMLElement).click(); // click.self：目标为 mask 自身
+    const cancel = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === "取消")!;
+    await vi.waitFor(() => expect(cancel.disabled).toBe(true));
+    cancel.click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(events).toEqual([]);
+    expect(el!.querySelector(".dialog")).toBeTruthy();
+  });
+
   it("参数拼装：模块/标题/前缀/自定义分支按需附加", async () => {
     mountDialog();
     setInput(0, "demo");

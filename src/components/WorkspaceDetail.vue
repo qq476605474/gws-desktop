@@ -56,16 +56,25 @@ async function doCmd(label: string, args: string[], third?: ExecOpts | string) {
   // 命令结束后总是 refresh（即使命令失败）：refresh 自身有错误保护
   await refresh();
 }
+/** confirm 的 IPC 往返间隙重入守卫：双击 Push 可排队两次 confirm()，
+ *  连点两次“确定”则命令执行两次；此时 run 尚未启动、isRunning 不生效，须本地 ref 拦截 */
+const confirming = ref(false);
 /** Push / Merge+Push 会写远程：先原生确认再执行（防误推），其余操作不加确认 */
 async function confirmThenDo(label: string, args: string[], question: string) {
-  let ok = false;
+  if (confirming.value) return;
+  confirming.value = true;
   try {
-    ok = await confirm(question);
-  } catch {
-    return; // 理论上不 reject；万一异常按取消处理
+    let ok = false;
+    try {
+      ok = await confirm(question);
+    } catch {
+      return; // 理论上不 reject；万一异常按取消处理
+    }
+    if (!ok) return;
+    await doCmd(label, args);
+  } finally {
+    confirming.value = false;
   }
-  if (!ok) return;
-  await doCmd(label, args);
 }
 async function removeWs() {
   // macOS WKWebView 下原生 window.confirm 恒返回 false，须用插件的原生对话框

@@ -228,6 +228,25 @@ describe("WorkspaceDetail Push 前确认（写远程操作防误推）", () => {
     );
   });
 
+  it("重入守卫：confirm pending 期间再点 Push 不发起第二次 confirm（防双击排队两次确认）", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    // 第一次 confirm 挂起，模拟原生对话框等待用户点击的 IPC 间隙
+    let resolveFirst: (v: boolean) => void = () => {};
+    vi.mocked(confirm).mockImplementationOnce(
+      () => new Promise<boolean>((r) => { resolveFirst = r; }),
+    );
+    await mountReady();
+    clickText("Push");
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    clickText("Push"); // run 尚未启动（isRunning 不生效）：须由本地守卫拦下
+    await new Promise((r) => setTimeout(r, 10));
+    expect(confirm).toHaveBeenCalledTimes(1);
+    // 收尾：取消确认 → 不执行命令
+    resolveFirst(false);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+  });
+
   it("Merge+Push：confirm 取消 → 不执行；确认 → merge <env> --push", async () => {
     const { confirm } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(confirm).mockResolvedValue(false);
@@ -283,7 +302,7 @@ describe("WorkspaceDetail 头部刷新按钮", () => {
     await vi.waitFor(() => expect(el!.textContent).toContain("fresh-module"));
   });
 
-  it("命令运行中（isRunning）刷新禁用，命令结束后恢复", async () => {
+  it("命令运行中刷新按钮禁用（本文件 listen mock 为 no-op，无法模拟 exit，恢复半程不在此验证）", async () => {
     await mountReady();
     clickText("Pull");
     await vi.waitFor(() =>

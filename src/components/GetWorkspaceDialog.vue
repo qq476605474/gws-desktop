@@ -36,7 +36,7 @@ async function pull() {
 </script>
 
 <template>
-  <div class="mask" @click.self="emit('close')">
+  <div class="mask" @click.self="!submitting && emit('close')">
     <div class="dialog">
       <h3>拉取已推送的需求</h3>
       <label>远程 feature 分支 <input v-model="branch" placeholder="feature-20260818-checkout-revamp" /></label>
@@ -44,7 +44,7 @@ async function pull() {
       <label>标题 <input v-model="title" placeholder="中文标题（可选）" /></label>
       <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">
-        <button @click="emit('close')">取消</button>
+        <button :disabled="submitting" @click="emit('close')">取消</button>
         <button class="primary" :disabled="!branch || submitting" @click="pull">拉取</button>
       </div>
     </div>

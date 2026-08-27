@@ -97,6 +97,16 @@ export const useCmdStore = defineStore("cmd", () => {
       dialogRun.value = run;
       return run;
     } catch (e) {
+      // exec 三处可抛：a) runGwsStream 失败（无 run，current 未设）；b) listen 失败——此时
+      // current 已指向真实 running run，但监听已全拆、再无 exit 事件送达，若不手动置终态，
+      // isRunning() 恒 true → CmdDialog 关闭按钮永久禁用，全屏遮罩下应用锁死；c) replayOutput
+      // 失败——监听仍在，exit 到达后自愈，但置终态同样无害（exit 会再覆盖为真实结果）。
+      // 故只要 current 存在且非终态就一并判 failed（解锁 isRunning/closeDialog）。
+      if (current.value && current.value.state !== "done" && current.value.state !== "failed") {
+        current.value.state = "failed";
+        current.value.code = null;
+        current.value.output += `\n[事件订阅/回放失败] ${String(e)}`;
+      }
       // invoke reject（如 gws 未安装、IPC 失败）：命令弹窗展示合成 failed run，
       // 让用户看到失败原因并手动关闭（不额外订阅事件，id 取 -1 与真实 runId 区分）；
       // 随后原样 rethrow——调用方既有 catch（内联 err 提示）逻辑保持不变

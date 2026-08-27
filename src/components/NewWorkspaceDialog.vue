@@ -42,7 +42,7 @@ async function create() {
 </script>
 
 <template>
-  <div class="mask" @click.self="emit('close')">
+  <div class="mask" @click.self="!submitting && emit('close')">
     <div class="dialog">
       <h3>新建需求工作区</h3>
       <!-- gws new 的名称是必填位置参数（无留空反推：留空直接报用法错误）；
@@ -64,7 +64,7 @@ async function create() {
       </fieldset>
       <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">
-        <button @click="emit('close')">取消</button>
+        <button :disabled="submitting" @click="emit('close')">取消</button>
         <button class="primary" :disabled="!name || submitting" @click="create">创建</button>
       </div>
     </div>
