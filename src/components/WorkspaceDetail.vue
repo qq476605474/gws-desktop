@@ -7,6 +7,7 @@ import { runGws } from "../lib/gws-bridge";
 import { parseSt, type StResult } from "../lib/parse";
 import PathActions from "./PathActions.vue";
 import AddModuleDialog from "./AddModuleDialog.vue";
+import SyncMainDialog from "./SyncMainDialog.vue";
 
 const props = defineProps<{ name: string }>();
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -20,6 +21,7 @@ let seq = 0;
 const wsPath = computed(() => `${hub.path}/ws/${props.name}`);
 const showAdd = ref(false);
 const mergeEnv = ref("");
+const showSyncMain = ref(false);
 
 async function refresh() {
   const n = ++seq;
@@ -41,13 +43,11 @@ async function refresh() {
     stErr.value = String(e);
   }
 }
-/** 第三参：string = cwd（Sync 在 hub 根执行）；对象 = ExecOpts（drop 传 1500）；
- *  均省略 = cwd 取 wsPath——消除旧签名（cwd,opts）下 drop 调用点的 undefined 占位 */
-async function doCmd(label: string, args: string[], third?: ExecOpts | string) {
-  const opts: ExecOpts = typeof third === "object" ? third : {};
-  const cwd = typeof third === "string" ? third : wsPath.value;
+/** opts：ExecOpts（drop 传 1500），省略 = cwd 取 wsPath（原先的 string cwd 变体随
+ *  gws sync 移出工作区一并移除，工作区内命令均在 wsPath 执行） */
+async function doCmd(label: string, args: string[], opts: ExecOpts = {}) {
   try {
-    const run = await cmd.execDialog(label, args, cwd, opts);
+    const run = await cmd.execDialog(label, args, wsPath.value, opts);
     await cmd.waitDone(run); // 等终态再 refresh，否则命令仍在跑、拿到的是旧数据
   } catch (e) {
     // execDialog/waitDone reject（如 IPC 失败）：并入 stErr 错误行，避免 unhandled rejection
@@ -75,6 +75,16 @@ async function confirmThenDo(label: string, args: string[], question: string) {
   } finally {
     confirming.value = false;
   }
+}
+/** SyncMainDialog 的 run 回调：先关弹窗再确认执行。sync-main 合并会改写本地分支内容
+ *  （变更类操作），--from 可选——留空时 gws 默认取创建时基线（主干） */
+function onSyncMain(from: string) {
+  showSyncMain.value = false;
+  confirmThenDo(
+    `gws sync-main${from ? ` --from ${from}` : ""}`,
+    ["sync-main", "--yes", ...(from ? ["--from", from] : [])],
+    `确认把 ${from || "创建时基线（默认主干）"} 的最新提交合进当前工作区？`,
+  );
 }
 async function removeWs() {
   // macOS WKWebView 下原生 window.confirm 恒返回 false，须用插件的原生对话框
@@ -123,8 +133,8 @@ onMounted(refresh);
       </select>
       <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv}`, ['merge', mergeEnv], `确认把 ${mergeEnv} 合并进当前工作区？（本地合并不推送）`)">Merge（本地）</button>
       <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv} --push`, ['merge', mergeEnv, '--push'], `确认合并到 ${mergeEnv} 并推送到远程？`)">Merge+Push</button>
-      <button :disabled="cmd.isRunning()" @click="doCmd('gws sync-main', ['sync-main', '--yes'])">Sync-main</button>
-      <button :disabled="cmd.isRunning()" @click="doCmd('gws sync', ['sync'], hub.path)">Sync</button>
+      <!-- gws sync 移出工作区（职责在仓库/环境 tab）；sync-main 留此且 --from 可选，经弹窗收集来源 -->
+      <button :disabled="cmd.isRunning()" @click="showSyncMain = true">同步最新代码</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws done', ['done'])">Done 校验</button>
       <button :disabled="cmd.isRunning()" @click="showAdd = true">+ 模块</button>
       <button class="danger" :disabled="cmd.isRunning()" @click="removeWs">删除工作区</button>
@@ -150,6 +160,7 @@ onMounted(refresh);
     <!-- 仅在无数据且无错误时才显示加载中：stErr 时上方错误行已给出失败原因与重试入口 -->
     <p v-else-if="!stErr" class="muted">加载中…</p>
     <AddModuleDialog v-if="showAdd" :ws-path="wsPath" :existing="st ? st.modules.map((m) => m.name) : []" @close="showAdd = false" @added="refresh" />
+    <SyncMainDialog v-if="showSyncMain" @close="showSyncMain = false" @run="onSyncMain" />
   </div>
 </template>
 

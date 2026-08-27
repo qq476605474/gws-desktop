@@ -163,7 +163,7 @@ describe("EnvsTab", () => {
 
   it("sync：于 hub.path 执行 gws sync，结束后刷新", async () => {
     mountTab();
-    clickButton("🔄 gws sync");
+    clickButton("同步最新代码");
 
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["sync"], "/hub", 30000));
     await exitWith(1, 0);
@@ -198,7 +198,7 @@ describe("EnvsTab", () => {
     clickButton("移除"); // 首行 dev；点击时无命令在跑，按钮可点
     await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("移除环境 dev？"));
 
-    clickButton("🔄 gws sync"); // 弹窗打开期间另一入口启动命令
+    clickButton("同步最新代码"); // 弹窗打开期间另一入口启动命令
     // gws-exit:1 订阅就绪时 exec 已设置 current（state=running）→ isRunning() 为 true
     await vi.waitFor(() => expect(mocks.handlers.get("gws-exit:1")).toBeTruthy());
 

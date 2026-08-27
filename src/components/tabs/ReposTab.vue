@@ -28,6 +28,20 @@ async function addRepos() {
   await hub.refreshAll();
 }
 
+async function sync() {
+  if (submitting.value) return; // 同 addRepos：防本地在途时重复提交
+  submitting.value = true;
+  try {
+    const run = await cmd.execDialog("gws sync", ["sync"], hub.path);
+    await cmd.waitDone(run);
+  } catch {
+    // 同 addRepos：吞 reject，仍刷新
+  } finally {
+    submitting.value = false;
+  }
+  await hub.refreshAll();
+}
+
 async function rm(name: string) {
   // macOS WKWebView 下原生 confirm 恒返回 false，须用插件原生对话框；异常按取消处理
   let ok = false;
@@ -52,7 +66,8 @@ async function rm(name: string) {
   <div>
     <div class="toolbar">
       <input v-model="input" :disabled="cmd.isRunning()" autocapitalize="off" spellcheck="false" placeholder="git 地址（可多个，空格分隔）" style="flex:1" />
-      <button class="primary" :disabled="!input.trim() || cmd.isRunning() || submitting" @click="addRepos">+ 添加仓库</button>
+      <button :disabled="!input.trim() || cmd.isRunning() || submitting" @click="addRepos">+ 添加仓库</button>
+      <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">同步最新代码</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
     <div class="group-row">📁 repos <code>{{ hub.path }}/repos</code> <PathActions :path="`${hub.path}/repos`" /></div>
@@ -66,7 +81,7 @@ async function rm(name: string) {
       </span>
     </div>
     <p v-if="!hub.repos.length && !hub.error" class="muted">(暂无仓库)</p>
-    <p v-if="cmd.current?.label === 'gws repo add' && cmd.current.state !== 'failed'" class="hint">添加后执行环境 Tab 的 gws sync 补建 worktree</p>
+    <p v-if="cmd.current?.label === 'gws repo add' && cmd.current.state !== 'failed'" class="hint">添加后点击「同步最新代码」补建 worktree</p>
   </div>
 </template>
 

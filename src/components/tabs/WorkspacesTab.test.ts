@@ -180,6 +180,7 @@ describe("WorkspacesTab 互斥详情（真跳转）", () => {
     expect(el!.querySelector("table")).toBeNull();
     expect(el!.textContent).not.toContain("order-service");
     expect(el!.textContent).toContain("+ 新建需求"); // 工具栏恢复
+    expect(el!.textContent).toContain("⇄ 导入需求"); // gws get 入口（用户反馈 #4 文案）
   });
 
   it("从详情返回后再点另一行（cart）：:key 变化重挂载、拉取新工作区的 st", async () => {

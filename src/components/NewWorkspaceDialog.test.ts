@@ -172,7 +172,9 @@ describe("NewWorkspaceDialog", () => {
     mountDialog();
     setInput(0, "demo");
     setInput(1, "结算改版"); // 标题
-    setInput(2, "custom-branch"); // 完全自定义分支名（文本输入序：名称/标题/自定义分支）
+    // 自定义分支名命中 <前缀>-日期-<名称> 模式（文本输入序：名称/标题/自定义分支），
+    // 名称随分支名反推为 demo（与手填一致）
+    setInput(2, "feature-20260827-demo");
     // 前缀切 hotfix
     const select = el!.querySelector<HTMLSelectElement>("select")!;
     select.value = "hotfix";
@@ -180,7 +182,7 @@ describe("NewWorkspaceDialog", () => {
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "demo", "--title", "结算改版", "--prefix", "hotfix", "--branch", "custom-branch"],
+        ["new", "demo", "--title", "结算改版", "--prefix", "hotfix", "--branch", "feature-20260827-demo"],
         "/hub",
         30000,
       ),
@@ -208,6 +210,71 @@ describe("NewWorkspaceDialog", () => {
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--prefix", "bugfix"], "/hub", 30000),
+    );
+  });
+});
+
+describe("NewWorkspaceDialog 自定义分支名反推名称（用户反馈 #5）", () => {
+  /** 填自定义分支名（按 placeholder 定位：名称输入框随 customBranch 隐藏后索引会漂移） */
+  function setCustomBranch(value: string) {
+    const input = Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
+      .find((i) => i.placeholder.includes("留空则用前缀"))!;
+    input.value = value;
+    input.dispatchEvent(new Event("input"));
+  }
+
+  /** 名称输入框是否渲染（以 placeholder 识别，避免与标题/分支输入框混淆） */
+  function nameInput(): HTMLInputElement | null {
+    return Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
+      .find((i) => i.placeholder.includes("必填")) ?? null;
+  }
+
+  it("customBranch 命中 <前缀>-YYYYMMDD-<名称>：名称输入框隐藏、说明行实时显示反推结果、提交首参为反推值", async () => {
+    mountDialog();
+    setCustomBranch("feature-20260827-abc");
+    await nextTick();
+    expect(nameInput()).toBeNull(); // 名称输入框被 v-if 卸载
+    expect(el!.textContent).toContain("名称将从分支名反推：abc");
+    // 名称未手填也可创建（分支名已含名称信息，按钮不再依赖名称输入）
+    await clickCreate();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "abc", "--branch", "feature-20260827-abc"],
+        "/hub",
+        30000,
+      ),
+    );
+  });
+
+  it("customBranch 不匹配反推模式：名称退回完整分支名", async () => {
+    mountDialog();
+    setCustomBranch("mybranch");
+    await nextTick();
+    expect(nameInput()).toBeNull();
+    expect(el!.textContent).toContain("名称将从分支名反推：mybranch");
+    await clickCreate();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "mybranch", "--branch", "mybranch"],
+        "/hub",
+        30000,
+      ),
+    );
+  });
+
+  it("customBranch 清空：名称输入框恢复渲染、提交用手填值（原行为不变）", async () => {
+    mountDialog();
+    setCustomBranch("feature-20260827-abc");
+    await nextTick();
+    expect(el!.textContent).toContain("名称将从分支名反推：abc");
+    setCustomBranch("");
+    await nextTick();
+    expect(nameInput()).toBeTruthy();
+    expect(el!.textContent).not.toContain("名称将从分支名反推");
+    setInput(0, "demo");
+    await clickCreate();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo"], "/hub", 30000),
     );
   });
 });

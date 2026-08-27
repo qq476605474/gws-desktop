@@ -298,6 +298,73 @@ describe("WorkspaceDetail Push / Merge 前确认（破坏性操作防误点）",
   });
 });
 
+describe("WorkspaceDetail 同步最新代码（sync-main，--from 可选）", () => {
+  it("工具栏按钮布局：Sync/Sync-main 已移除（gws sync 归仓库/环境 tab），保留「同步最新代码」", async () => {
+    await mountReady();
+    const texts = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+      .map((b) => b.textContent?.trim());
+    expect(texts).not.toContain("Sync");
+    expect(texts).not.toContain("Sync-main");
+    expect(texts).toContain("同步最新代码");
+  });
+
+  /** 点「同步最新代码」打开 SyncMainDialog 并等其渲染 */
+  async function openSyncMain() {
+    await mountReady();
+    clickText("同步最新代码");
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeTruthy());
+  }
+
+  /** SyncMainDialog 内的 from 输入框填值（v-model 监听 input） */
+  async function setFrom(value: string) {
+    const input = el!.querySelector<HTMLInputElement>(".dialog input")!;
+    input.value = value;
+    input.dispatchEvent(new Event("input"));
+    await nextTick();
+  }
+
+  it("输入 from → 开始同步 → confirm 确认：执行 sync-main --yes --from <ref>，弹窗即关", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(true);
+    await openSyncMain();
+    await setFrom("release-2.0");
+    clickText("开始同步");
+    // run 后弹窗立即关闭（执行由父组件 confirmThenDo 接手）
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull());
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["sync-main", "--yes", "--from", "release-2.0"],
+        "/hub/ws/demo",
+        30000,
+      ),
+    );
+    // 确认文案带上来源分支
+    expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("release-2.0");
+  });
+
+  it("留空 from → 开始同步：args 无 --from（走创建时基线）", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(true);
+    await openSyncMain();
+    clickText("开始同步");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["sync-main", "--yes"], "/hub/ws/demo", 30000),
+    );
+    expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("创建时基线");
+  });
+
+  it("confirm 取消 → 不执行命令（sync-main 合并属变更操作，须确认）", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(false);
+    await openSyncMain();
+    await setFrom("release-2.0");
+    clickText("开始同步");
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+  });
+});
+
 describe("WorkspaceDetail 头部刷新按钮", () => {
   it("点击刷新 → 重新拉 gws st，新结果渲染", async () => {
     await mountReady();

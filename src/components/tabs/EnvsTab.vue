@@ -67,7 +67,7 @@ async function sync() {
     <div class="toolbar">
       <input v-model="newEnv" :disabled="cmd.isRunning()" autocapitalize="off" spellcheck="false" placeholder="环境分支名（如 pre、dev1）" />
       <button :disabled="!newEnv.trim() || cmd.isRunning() || submitting" @click="addEnv">+ 添加环境</button>
-      <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">🔄 gws sync</button>
+      <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">同步最新代码</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
     <div class="group-row">📁 envs <code>{{ hub.path }}/envs</code> <PathActions :path="`${hub.path}/envs`" /></div>

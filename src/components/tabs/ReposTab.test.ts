@@ -168,6 +168,28 @@ describe("ReposTab", () => {
     expect(inputValue()).toBe("https://git.example.com/a.git");
   });
 
+  it("sync：于 hub.path 执行 gws sync，结束后刷新", async () => {
+    mountTab();
+    clickButton("同步最新代码");
+
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["sync"], "/hub", 30000));
+    await exitWith(1, 0);
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
+  });
+
+  it("sync：双击守卫——首击在途（submitting）时同步第二击不重复 exec", async () => {
+    mountTab();
+    // 同一任务里同步连点两次：Vue 未及重渲染禁用按钮，第二击只能靠 submitting 守卫拦截
+    clickButton("同步最新代码");
+    clickButton("同步最新代码");
+
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
+    expect(mocks.runGwsStream).toHaveBeenCalledWith(["sync"], "/hub", 30000);
+
+    await exitWith(1, 0);
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
+  });
+
   it("rm：confirm 取消 → 不发命令、不刷新", async () => {
     mountTab();
     mocks.confirm.mockResolvedValueOnce(false);

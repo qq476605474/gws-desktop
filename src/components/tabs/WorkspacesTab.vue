@@ -22,7 +22,7 @@ onMounted(() => hub.refreshAll());
   <template v-if="!detail">
     <div class="toolbar">
       <button class="primary" @click="showNew = true">+ 新建需求</button>
-      <button @click="showGet = true">⇄ gws get 拉取</button>
+      <button @click="showGet = true">⇄ 导入需求</button>
       <button :disabled="cmd.isRunning()" @click="hub.refreshAll()">刷新</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
