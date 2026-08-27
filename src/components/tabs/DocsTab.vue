@@ -181,7 +181,7 @@ onMounted(refresh);
         <option :value="HUB_ROOT">Hub 根文档</option>
       </select>
       <!-- doc new 写死当前工作区 docdir：hub 根文档不可新建，输入与按钮随归属禁用 -->
-      <input v-model="newFile" placeholder="新文档名.md" :disabled="isHubData || cmd.isRunning()" />
+      <input v-model="newFile" autocapitalize="off" spellcheck="false" placeholder="新文档名.md" :disabled="isHubData || cmd.isRunning()" />
       <button class="primary" :disabled="!newFile.trim() || isHubData || cmd.isRunning() || submitting" @click="create">+ 新建文档</button>
       <!-- doc commit 实为整个 hub 文档仓库的 git add -A（与单行文件无关），收敛为工具栏统一入口；hub 根文档亦可提交 -->
       <button :disabled="cmd.isRunning()" @click="commit">commit 全部文档</button>

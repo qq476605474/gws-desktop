@@ -65,7 +65,7 @@ async function sync() {
 <template>
   <div>
     <div class="toolbar">
-      <input v-model="newEnv" :disabled="cmd.isRunning()" placeholder="环境分支名（如 pre、dev1）" />
+      <input v-model="newEnv" :disabled="cmd.isRunning()" autocapitalize="off" spellcheck="false" placeholder="环境分支名（如 pre、dev1）" />
       <button :disabled="!newEnv.trim() || cmd.isRunning() || submitting" @click="addEnv">+ 添加环境</button>
       <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">🔄 gws sync</button>
     </div>

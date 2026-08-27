@@ -47,8 +47,8 @@ async function create() {
       <h3>新建需求工作区</h3>
       <!-- gws new 的名称是必填位置参数（无留空反推：留空直接报用法错误）；
            默认分支 = <前缀>-<日期YYYYMMDD>-<名称>，标题缺省同名称 -->
-      <label>名称 <input v-model="name" placeholder="必填，如 checkout-revamp（默认分支=前缀-日期-名称）" /></label>
-      <label>标题 <input v-model="title" placeholder="中文标题（可选，默认同名称）" /></label>
+      <label>名称 <input v-model="name" autocapitalize="off" spellcheck="false" placeholder="必填，如 checkout-revamp（默认分支=前缀-日期-名称）" /></label>
+      <label>标题 <input v-model="title" autocapitalize="off" spellcheck="false" placeholder="中文标题（可选，默认同名称）" /></label>
       <label>分支前缀
         <select v-model="prefix">
           <option value="feature">feature (默认)</option>
@@ -62,7 +62,7 @@ async function create() {
           <option value="chore">chore</option>
         </select>
       </label>
-      <label>完全自定义分支名 <input v-model="customBranch" placeholder="留空则用前缀-日期-名称" /></label>
+      <label>完全自定义分支名 <input v-model="customBranch" autocapitalize="off" spellcheck="false" placeholder="留空则用前缀-日期-名称" /></label>
       <fieldset>
         <legend>模块（不选=全部仓库）</legend>
         <label v-for="r in hub.repos" :key="r.name">

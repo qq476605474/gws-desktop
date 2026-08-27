@@ -1286,7 +1286,7 @@ cmd_migrate() {
   echo
   echo "  ${B}下一步${N}"
   echo "    ${B}cd $target && gws sync${N}    ${D}(补建 envs worktree)${N}"
-  [ "$mode" = "move" ] && echo "    ${D}旧 hub 的 repos/ 已搬空，确认新 hub 正常后可删除: $old_hub${N}"
+  if [ "$mode" = "move" ]; then echo "    ${D}旧 hub 的 repos/ 已搬空，确认新 hub 正常后可删除: $old_hub${N}"; fi
 }
 
 # ══ repo：仓库管理 ════════════════════════════════════════════════════
@@ -1350,7 +1350,12 @@ cmd_env() {
     add)
       [ $# -gt 0 ] || die "用法: gws env add <环境分支>...   ${D}(如 dev1、pre2、dev_tmp)${N}"
       prune_all_repos
+      local fail=()
       for e in "$@"; do
+        # macOS 大小写不敏感文件系统：目录名 Ghost 与 git refs 磁盘小写 ghost 对不上，环境永久锁死
+        case "$e" in
+          *[A-Z]*) die "环境名不允许大写字母: $e  ${D}(macOS 大小写不敏感文件系统下目录名与 git 分支名会对不上而锁死)${N}";;
+        esac
         [ -d "$ENVS/$e" ] && { warn "$e: 已存在"; continue; }
         # 至少要有一个仓库存在该远程分支，否则多半是敲错了
         local found=0
@@ -1363,7 +1368,10 @@ cmd_env() {
           if [ -t 0 ]; then
             read -rp "     仍要创建? [y/N] " a
             case "$a" in y|Y) ;; *) continue;; esac
-          else continue; fi
+          else
+            # 非交互（GUI 管道）不能静默跳过——调用方会误以为创建成功
+            fail+=("$e: 远程无该分支"); continue
+          fi
         fi
         mkdir -p "$ENVS/$e"
         local n=0
@@ -1376,8 +1384,16 @@ cmd_env() {
           fi
           n=$((n+1))
         done
+        if [ "$n" = 0 ]; then
+          rmdir "$ENVS/$e" 2>/dev/null
+          fail+=("$e: 没有任何模块创建成功")
+          continue
+        fi
         ok "$e 已创建 ${D}($n 个模块)${N}"
-      done;;
+      done
+      if [ ${#fail[@]} -gt 0 ]; then
+        echo; warn "以下环境未创建成功:"; printf "     %s\n" "${fail[@]}"; return 1
+      fi;;
     rm|remove)
       [ $# -gt 0 ] || die "用法: gws env rm <环境分支>..."
       for e in "$@"; do
@@ -1417,7 +1433,7 @@ cmd_env() {
           echo "  ${G}●${N} $e  ${D}($n 个模块)${N}"
         fi
       done
-      [ "$any" = 0 ] && echo "  ${D}(暂无环境，用 gws env add dev pre 创建)${N}";;
+      if [ "$any" = 0 ]; then echo "  ${D}(暂无环境，用 gws env add dev pre 创建)${N}"; fi;;
     *) die "用法: gws env add <环境>... | rm <环境>... | ls";;
   esac
 }

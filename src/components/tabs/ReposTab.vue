@@ -51,7 +51,7 @@ async function rm(name: string) {
 <template>
   <div>
     <div class="toolbar">
-      <input v-model="input" :disabled="cmd.isRunning()" placeholder="git 地址（可多个，空格分隔）" style="flex:1" />
+      <input v-model="input" :disabled="cmd.isRunning()" autocapitalize="off" spellcheck="false" placeholder="git 地址（可多个，空格分隔）" style="flex:1" />
       <button class="primary" :disabled="!input.trim() || cmd.isRunning() || submitting" @click="addRepos">+ 添加仓库</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
