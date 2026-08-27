@@ -154,23 +154,23 @@ describe("WorkspaceDetail.refresh 错误处理与并发守卫", () => {
   });
 });
 
+function clickText(text: string) {
+  const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+    .find((b) => b.textContent?.trim() === text);
+  if (!btn) throw new Error(`按钮「${text}」未找到`);
+  btn.click();
+}
+
+/** 先让 st 表格渲染出来（refresh 就绪），再触发命令按钮 */
+async function mountReady() {
+  mountDetail();
+  mocks.runGwsStream.mockResolvedValue(1);
+  mocks.replayOutput.mockResolvedValue(undefined);
+  pending[0]!.resolve({ code: 0, output: stOut("order-service") });
+  await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
+}
+
 describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
-  function clickText(text: string) {
-    const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
-      .find((b) => b.textContent?.trim() === text);
-    if (!btn) throw new Error(`按钮「${text}」未找到`);
-    btn.click();
-  }
-
-  /** 先让 st 表格渲染出来（refresh 就绪），再触发命令按钮 */
-  async function mountReady() {
-    mountDetail();
-    mocks.runGwsStream.mockResolvedValue(1);
-    mocks.replayOutput.mockResolvedValue(undefined);
-    pending[0]!.resolve({ code: 0, output: stOut("order-service") });
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-  }
-
   it("doCmd 走 execDialog：默认 confirmTimeoutMs=30000（慢命令防假确认）", async () => {
     await mountReady();
     clickText("Pull");
@@ -195,5 +195,104 @@ describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["rm", "demo", "--force"], "/hub", 30000),
     );
+  });
+});
+
+describe("WorkspaceDetail Push 前确认（写远程操作防误推）", () => {
+  it("Push：confirm 取消 → 不执行命令；Pull 等读侧操作不经 confirm", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(false);
+    await mountReady();
+    clickText("Push");
+    // 等一拍确认 confirm 已被调用且命令未发起
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+    // 确认弹窗文案带上当前分支
+    expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("feature-20260818-checkout-revamp");
+    // 对照：Pull 不弹确认、直接执行
+    clickText("Pull");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["pull"], "/hub/ws/demo", 30000),
+    );
+    expect(confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("Push：confirm 确认 → 执行 gws push（默认 30000）", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(true);
+    await mountReady();
+    clickText("Push");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["push"], "/hub/ws/demo", 30000),
+    );
+  });
+
+  it("Merge+Push：confirm 取消 → 不执行；确认 → merge <env> --push", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(confirm).mockResolvedValue(false);
+    await mountReady();
+    const hub = useHubStore();
+    hub.envs = ["dev", "pre"];
+    await nextTick();
+    // 选择环境 pre（select v-model 监听 change）
+    const select = el!.querySelector<HTMLSelectElement>("select")!;
+    select.value = "pre";
+    select.dispatchEvent(new Event("change"));
+    await nextTick();
+
+    clickText("Merge+Push");
+    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("pre");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(mocks.runGwsStream).not.toHaveBeenCalled();
+
+    vi.mocked(confirm).mockResolvedValue(true);
+    clickText("Merge+Push");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["merge", "pre", "--push"], "/hub/ws/demo", 30000),
+    );
+  });
+
+  it("Merge（本地）不弹确认：直接执行 merge <env>", async () => {
+    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    await mountReady();
+    const hub = useHubStore();
+    hub.envs = ["dev"];
+    await nextTick();
+    const select = el!.querySelector<HTMLSelectElement>("select")!;
+    select.value = "dev";
+    select.dispatchEvent(new Event("change"));
+    await nextTick();
+    clickText("Merge（本地）");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["merge", "dev"], "/hub/ws/demo", 30000),
+    );
+    expect(confirm).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceDetail 头部刷新按钮", () => {
+  it("点击刷新 → 重新拉 gws st，新结果渲染", async () => {
+    await mountReady();
+    expect(mocks.runGws).toHaveBeenCalledTimes(1);
+    clickText("刷新");
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(2));
+    expect(mocks.runGws).toHaveBeenLastCalledWith(["st"], "/hub/ws/demo");
+    pending[1]!.resolve({ code: 0, output: stOut("fresh-module") });
+    await vi.waitFor(() => expect(el!.textContent).toContain("fresh-module"));
+  });
+
+  it("命令运行中（isRunning）刷新禁用，命令结束后恢复", async () => {
+    await mountReady();
+    clickText("Pull");
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["pull"], "/hub/ws/demo", 30000),
+    );
+    // 命令未结束（无 exit 事件）→ 运行中：刷新禁用
+    const refreshBtn = () => Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === "刷新")!;
+    await vi.waitFor(() => expect(refreshBtn().disabled).toBe(true));
+    expect(mocks.runGws).toHaveBeenCalledTimes(1); // 未重复拉取
   });
 });

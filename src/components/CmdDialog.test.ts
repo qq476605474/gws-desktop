@@ -26,7 +26,10 @@ vi.mock("../lib/gws-bridge", () => ({
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (event: string, handler: Handler) => {
     mocks.handlers.set(event, handler);
-    return () => mocks.handlers.delete(event);
+    return () => {
+      // 仅拆除本次注册的 handler：上轮测试遗留的清理定时器触发时不误删新一轮订阅
+      if (mocks.handlers.get(event) === handler) mocks.handlers.delete(event);
+    };
   }),
 }));
 
@@ -165,5 +168,80 @@ describe("CmdDialog 终态与关闭", () => {
     store!.releaseDialog();
     await nextTick();
     expect(closeButton().disabled).toBe(false);
+  });
+});
+
+describe("CmdDialog 终止按钮（运行中命令的逃生口）", () => {
+  function terminateButton(): HTMLButtonElement | undefined {
+    return Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === "终止");
+  }
+
+  it("运行中显示终止按钮；点击 → respondConfirm(runId, false)；关闭仍禁用", async () => {
+    mocks.respondConfirm.mockResolvedValue(undefined);
+    mountDialog();
+    await startRun();
+    await nextTick();
+
+    const btn = terminateButton();
+    expect(btn).toBeTruthy();
+    btn!.click();
+    await vi.waitFor(() =>
+      expect(mocks.respondConfirm).toHaveBeenCalledWith(1, false),
+    );
+    expect(closeButton().disabled).toBe(true); // 终态前关闭仍禁用
+  });
+
+  it("confirm 态也显示终止按钮（点击同样走 respondConfirm false）", async () => {
+    mocks.respondConfirm.mockResolvedValue(undefined);
+    mountDialog();
+    await startRun();
+    await nextTick();
+
+    emit("gws-confirm:1", { question: "gws 在 /hub 等待确认（30s 无输出）。确认继续？" });
+    await nextTick();
+    expect(terminateButton()).toBeTruthy();
+    terminateButton()!.click();
+    await vi.waitFor(() =>
+      expect(mocks.respondConfirm).toHaveBeenCalledWith(1, false),
+    );
+  });
+
+  it("终止后被杀（exit code null）→ failed 终态：终止按钮消失、关闭可用", async () => {
+    mocks.respondConfirm.mockResolvedValue(undefined);
+    mountDialog();
+    await startRun();
+    await nextTick();
+
+    terminateButton()!.click();
+    // 后端 kill → 读者 EOF → waiter 发 exit(null)
+    emit("gws-exit:1", { code: null });
+    await vi.waitFor(() => expect(el!.textContent).toContain("✗ 失败"));
+    expect(terminateButton()).toBeUndefined(); // 终态后终止按钮消失
+    expect(closeButton().disabled).toBe(false);
+  });
+
+  it("已终态（done）不渲染终止按钮", async () => {
+    mountDialog();
+    await startRun();
+    await nextTick();
+
+    emit("gws-exit:1", { code: 0 });
+    await vi.waitFor(() => expect(el!.textContent).toContain("✓ 完成"));
+    expect(terminateButton()).toBeUndefined();
+  });
+
+  it("respondConfirm reject（run 已清理）不崩：弹窗保持、等 exit 终态", async () => {
+    mocks.respondConfirm.mockRejectedValueOnce(new Error("run 不存在"));
+    mountDialog();
+    await startRun();
+    await nextTick();
+
+    terminateButton()!.click();
+    await vi.waitFor(() => expect(mocks.respondConfirm).toHaveBeenCalledTimes(1));
+    // 弹窗仍在、无异常冒泡（terminate 内部吞掉）；exit 到达后正常进终态
+    expect(el!.querySelector(".mask")).toBeTruthy();
+    emit("gws-exit:1", { code: null });
+    await vi.waitFor(() => expect(el!.textContent).toContain("✗ 失败"));
   });
 });

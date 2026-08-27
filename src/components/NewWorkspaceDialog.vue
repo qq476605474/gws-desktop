@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref } from "vue";
 import { useHubStore } from "../stores/hub";
 import { useCmdStore } from "../stores/cmd";
 
@@ -26,18 +26,14 @@ async function create() {
   submitting.value = true;
   try {
     const run = await cmd.execDialog(`gws new ${name.value}`, args, hub.path);
-    emit("close");
-    // 关闭弹窗但等命令结束后再通知刷新（watcher 在 await 后创建、不随组件卸载而停止，结束即自停）；
-    // 命令若瞬间结束，exit 事件可先于 exec 的 promise 决议送达，此时现值已是终态、watcher 不会再触发，须先查现值
-    if (run.state === "done" || run.state === "failed") {
-      emit("created");
-      return;
-    }
-    const stop = watch(() => run.state, (s) => {
-      if (s === "done" || s === "failed") { stop(); emit("created"); }
-    });
+    // 等命令终态再收尾：组件必须存活到 emit 时（Vue 对已卸载实例的 emit 是 no-op，
+    // 先前的「立即关窗 + watcher 里补发 created」会让刷新通知永远丢失）
+    await cmd.waitDone(run);
+    if (run.state !== "done") return; // 失败：不关窗不 emit created——错误见命令弹窗，输入保留便于重试
+    emit("created"); // 先让父组件刷新列表
+    emit("close"); // 再关窗（同一同步块内，父组件先收 created）
   } catch (e) {
-    // exec reject（如 IPC 失败）：写入内联提示，弹窗不关闭，让用户看到错误后手动取消
+    // exec/waitDone reject（如 IPC 失败）：写入内联提示，弹窗不关闭，让用户看到错误后手动取消
     err.value = String(e);
   } finally {
     submitting.value = false;
@@ -49,8 +45,10 @@ async function create() {
   <div class="mask" @click.self="emit('close')">
     <div class="dialog">
       <h3>新建需求工作区</h3>
-      <label>名称 <input v-model="name" placeholder="如 checkout-revamp" /></label>
-      <label>标题 <input v-model="title" placeholder="中文标题（可选）" /></label>
+      <!-- gws new 的名称是必填位置参数（无留空反推：留空直接报用法错误）；
+           默认分支 = <前缀>-<日期YYYYMMDD>-<名称>，标题缺省同名称 -->
+      <label>名称 <input v-model="name" placeholder="必填，如 checkout-revamp（默认分支=前缀-日期-名称）" /></label>
+      <label>标题 <input v-model="title" placeholder="中文标题（可选，默认同名称）" /></label>
       <label>分支前缀
         <select v-model="prefix">
           <option value="feature">feature (默认)</option>

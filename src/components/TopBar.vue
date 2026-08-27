@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { confirm } from "@tauri-apps/plugin-dialog";
 import { useHubStore } from "../stores/hub";
 import { navigate } from "../router";
 
@@ -11,7 +12,16 @@ const emit = defineEmits<{
 }>();
 const hub = useHubStore();
 
-function switchHub() {
+// 防误触：hub 按钮点击不是切 tab 而是离开整个 main（StartupView 见 lastHub 自动回跳），
+// WorkspacesTab 将重挂载、已开详情与滚动全丢——先原生确认，确认后才跳转
+async function switchHub() {
+  let ok = false;
+  try {
+    ok = await confirm("要切换/重新选择 hub 目录吗？当前页面状态（如已打开的工作区详情）将丢失。");
+  } catch {
+    return; // 理论上不 reject；万一异常按取消处理
+  }
+  if (!ok) return;
   navigate("startup");
 }
 </script>

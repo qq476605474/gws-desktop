@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { ref } from "vue";
 import { useHubStore } from "../stores/hub";
 import { useCmdStore } from "../stores/cmd";
 
@@ -21,17 +21,13 @@ async function pull() {
   submitting.value = true;
   try {
     const run = await cmd.execDialog(`gws get ${branch.value}`, args, hub.path);
-    emit("close");
-    // 同 NewWorkspaceDialog：等命令结束再通知刷新；瞬间结束的命令现值已是终态，须先查现值
-    if (run.state === "done" || run.state === "failed") {
-      emit("created");
-      return;
-    }
-    const stop = watch(() => run.state, (s) => {
-      if (s === "done" || s === "failed") { stop(); emit("created"); }
-    });
+    // 同 NewWorkspaceDialog：等命令终态再收尾（组件存活到 emit 时，刷新通知不丢）
+    await cmd.waitDone(run);
+    if (run.state !== "done") return; // 失败：不关窗不 emit created——错误见命令弹窗，输入保留便于重试
+    emit("created"); // 先让父组件刷新列表
+    emit("close"); // 再关窗
   } catch (e) {
-    // exec reject（如 IPC 失败）：写入内联提示，弹窗不关闭，让用户看到错误后手动取消
+    // exec/waitDone reject（如 IPC 失败）：写入内联提示，弹窗不关闭，让用户看到错误后手动取消
     err.value = String(e);
   } finally {
     submitting.value = false;

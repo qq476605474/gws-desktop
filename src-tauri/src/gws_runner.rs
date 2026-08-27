@@ -13,6 +13,18 @@ const GWS_INSTALL_HINT: &str = "gws 未安装。安装: curl -fsSL https://raw.g
 const CONFIRM_SILENCE: Duration = Duration::from_millis(1500);
 const WATCHDOG_INTERVAL: Duration = Duration::from_millis(250);
 
+/// confirm_timeout_ms 的取值边界：下限 250ms = watchdog 轮询周期——更小的阈值与轮询
+/// 粒度无意义，且 Some(0) 会让持续输出型命令在首个轮询点就被误弹"等待确认"；
+/// 上限 1 小时防调用方误传巨大值把确认等待撑到不可用。None 保持默认 1500ms。
+fn clamped_confirm_timeout(confirm_timeout_ms: Option<u64>) -> Duration {
+    const MIN_MS: u64 = 250;
+    const MAX_MS: u64 = 3_600_000;
+    confirm_timeout_ms
+        .map(|v| v.clamp(MIN_MS, MAX_MS))
+        .map(Duration::from_millis)
+        .unwrap_or(CONFIRM_SILENCE)
+}
+
 /// 确认超时的展示文案：整秒显示 "30s"，非整秒保留一位小数 "1.5s"。
 fn confirm_secs_text(silence: Duration) -> String {
     if silence.as_millis() % 1000 == 0 {
@@ -367,7 +379,7 @@ pub fn spawn_stream<R: Runtime>(
         let app = app.clone();
         let meta = meta.clone();
         let cwd = cwd.to_string();
-        let confirm_silence = confirm_timeout_ms.map(Duration::from_millis).unwrap_or(CONFIRM_SILENCE);
+        let confirm_silence = clamped_confirm_timeout(confirm_timeout_ms);
         let secs_text = confirm_secs_text(confirm_silence);
         std::thread::spawn(move || loop {
             std::thread::sleep(WATCHDOG_INTERVAL);
@@ -462,6 +474,23 @@ mod tests {
         assert_eq!(confirm_secs_text(Duration::from_millis(100)), "0.1s");
         assert_eq!(confirm_secs_text(Duration::from_millis(30000)), "30s");
         assert_eq!(confirm_secs_text(Duration::from_millis(5000)), "5s");
+    }
+
+    #[test]
+    fn confirm_timeout_clamped_to_polling_bounds() {
+        // None → 默认 1500ms 不变
+        assert_eq!(clamped_confirm_timeout(None), CONFIRM_SILENCE);
+        // 下限 250ms（watchdog 轮询周期）：Some(0) 不再对持续输出命令乱发 confirm
+        assert_eq!(clamped_confirm_timeout(Some(0)), Duration::from_millis(250));
+        assert_eq!(clamped_confirm_timeout(Some(100)), Duration::from_millis(250));
+        assert_eq!(clamped_confirm_timeout(Some(249)), Duration::from_millis(250));
+        // 区间内原样透传
+        assert_eq!(clamped_confirm_timeout(Some(250)), Duration::from_millis(250));
+        assert_eq!(clamped_confirm_timeout(Some(1500)), Duration::from_millis(1500));
+        assert_eq!(clamped_confirm_timeout(Some(30_000)), Duration::from_millis(30_000));
+        // 上限 1 小时
+        assert_eq!(clamped_confirm_timeout(Some(3_600_000)), Duration::from_millis(3_600_000));
+        assert_eq!(clamped_confirm_timeout(Some(u64::MAX)), Duration::from_millis(3_600_000));
     }
 
     #[test]

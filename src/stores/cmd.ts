@@ -34,20 +34,38 @@ export const useCmdStore = defineStore("cmd", () => {
     // 回调里 run.output += ... 会绕过 ref 内部的代理而不触发 UI 更新。
     const run: CmdRun = reactive({ id: runId, label, output: "", state: "running", code: null });
     current.value = run;
-    await listen<{ chunk: string }>(`gws-output:${runId}`, (e) => {
-      run.output += e.payload.chunk;
-    });
-    await listen<{ code: number | null }>(`gws-exit:${runId}`, (e) => {
-      run.code = e.payload.code;
-      run.state = e.payload.code === 0 ? "done" : "failed";
-      // confirm 态下进程自行退出：清掉指向已死 runId 的挂起确认，避免僵尸弹窗
-      if (confirmPending.value?.runId === runId) confirmPending.value = null;
-      history.value.unshift(run);
-    });
-    await listen<{ question: string }>(`gws-confirm:${runId}`, (e) => {
-      run.state = "confirm";
-      confirmPending.value = { runId, question: e.payload.question };
-    });
+    // 三个订阅在 run 终态后拆除（见 exit handler 内的延迟清理）：长会话中监听表不随 exec 次数线性增长
+    const unlisteners: Array<() => void> = [];
+    try {
+      unlisteners.push(await listen<{ chunk: string }>(`gws-output:${runId}`, (e) => {
+        run.output += e.payload.chunk;
+      }));
+      unlisteners.push(await listen<{ code: number | null }>(`gws-exit:${runId}`, (e) => {
+        run.code = e.payload.code;
+        run.state = e.payload.code === 0 ? "done" : "failed";
+        // confirm 态下进程自行退出：清掉指向已死 runId 的挂起确认，避免僵尸弹窗
+        if (confirmPending.value?.runId === runId) confirmPending.value = null;
+        history.value.unshift(run);
+        // 延迟清理（不在 handler 内同步拆）的时序论证：
+        // a) Rust 侧 waiter 等读者排空才记 Exit、所有事件持锁按序 emit → Exit 恒为该 run
+        //    的最后一个事件，此后再无事件（watchdog 见 finished 即停、run 随即被清理）；
+        // b) 回放不受影响：replayOutput 在三个订阅注册完成之后才被调用，exit 事件（无论
+        //    回放还是直发）只可能在其后送达，exit handler 触发时不存在“尚未回放”的事件；
+        // c) 但 JS 侧投递是异步的，同 run 先 emit 的 output 与 exit 的到达间无同步屏障——
+        //    让出一个宏任务（setTimeout 0），确保已在途的投递全部落地后才拆除三个订阅。
+        setTimeout(() => {
+          for (const off of unlisteners) off();
+        }, 0);
+      }));
+      unlisteners.push(await listen<{ question: string }>(`gws-confirm:${runId}`, (e) => {
+        run.state = "confirm";
+        confirmPending.value = { runId, question: e.payload.question };
+      }));
+    } catch (e) {
+      // listen 注册失败（罕见）：拆除已注册的订阅再抛，不留泄漏
+      for (const off of unlisteners) off();
+      throw e;
+    }
     // 三个事件订阅完成 → 后端回放缓存事件并切换直发（否则订阅前的事件永远丢失）
     await replayOutput(runId);
     return run;
@@ -74,9 +92,17 @@ export const useCmdStore = defineStore("cmd", () => {
    * 静默远超 1500ms 默认阈值会被误弹"等待确认"；真读 stdin 的命令（gws drop）
    * 由调用方显式传 1500。 */
   async function execDialog(label: string, args: string[], cwd: string, opts?: ExecOpts): Promise<CmdRun> {
-    const run = await exec(label, args, cwd, { confirmTimeoutMs: opts?.confirmTimeoutMs ?? 30000 });
-    dialogRun.value = run;
-    return run;
+    try {
+      const run = await exec(label, args, cwd, { confirmTimeoutMs: opts?.confirmTimeoutMs ?? 30000 });
+      dialogRun.value = run;
+      return run;
+    } catch (e) {
+      // invoke reject（如 gws 未安装、IPC 失败）：命令弹窗展示合成 failed run，
+      // 让用户看到失败原因并手动关闭（不额外订阅事件，id 取 -1 与真实 runId 区分）；
+      // 随后原样 rethrow——调用方既有 catch（内联 err 提示）逻辑保持不变
+      dialogRun.value = { id: -1, label, output: String(e), state: "failed", code: null };
+      throw e;
+    }
   }
 
   /** 用户手动关闭命令弹窗（运行中/hold 期间按钮禁用，此处不再重复拦截） */

@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   replayOutput: vi.fn<(runId: number) => Promise<void>>().mockResolvedValue(undefined),
   /** 按事件名保存 listen 注册的 handler，测试中手动触发以模拟事件流 */
   handlers: new Map<string, Handler>(),
+  /** 已拆除订阅的事件名（监听器泄漏断言：run 终态后订阅应收尾） */
+  unlistened: [] as string[],
 }));
 
 vi.mock("../lib/gws-bridge", () => ({
@@ -23,7 +25,11 @@ vi.mock("../lib/gws-bridge", () => ({
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (event: string, handler: Handler) => {
     mocks.handlers.set(event, handler);
-    return () => mocks.handlers.delete(event);
+    return () => {
+      // 仅拆除本次注册的 handler：上轮测试遗留的清理定时器触发时不误删新一轮订阅
+      if (mocks.handlers.get(event) === handler) mocks.handlers.delete(event);
+      mocks.unlistened.push(event);
+    };
   }),
 }));
 
@@ -39,6 +45,7 @@ function emit(event: string, payload: Payload) {
 beforeEach(() => {
   setActivePinia(createPinia());
   mocks.handlers.clear();
+  mocks.unlistened.length = 0;
   vi.clearAllMocks();
   mocks.runGwsStream.mockResolvedValue(RUN_ID);
   mocks.replayOutput.mockResolvedValue(undefined);
@@ -238,5 +245,103 @@ describe("cmd store 弹窗执行（execDialog/closeDialog/holdDialog）", () => 
     // 防御：多余 release 不得把计数打成 -1
     store.releaseDialog();
     expect(store.holdCount).toBe(0);
+  });
+});
+
+describe("cmd store execDialog 失败展示（invoke reject 合成 failed run）", () => {
+  it("execDialog reject → dialogRun 为合成 failed run（label/错误文案）、原样 rethrow", async () => {
+    mocks.runGwsStream.mockRejectedValueOnce(new Error("gws 未安装"));
+    const store = useCmdStore();
+    await expect(store.execDialog("gws new demo", ["new", "demo"], "/hub"))
+      .rejects.toThrow("gws 未安装");
+    const run = store.dialogRun!;
+    expect(run.id).toBe(-1); // 与真实 runId 区分的合成标记
+    expect(run.label).toBe("gws new demo");
+    expect(run.output).toContain("gws 未安装");
+    expect(run.state).toBe("failed");
+    expect(run.code).toBeNull();
+    // 合成 run 不进 current：不算运行中，关闭按钮立即可用
+    expect(store.isRunning()).toBe(false);
+    expect(store.current).toBeNull();
+    store.closeDialog();
+    expect(store.dialogRun).toBeNull();
+  });
+
+  it("合成 failed run 不入 history、不订阅事件（无真实进程）", async () => {
+    mocks.runGwsStream.mockRejectedValueOnce(new Error("IPC 失败"));
+    const store = useCmdStore();
+    await expect(store.execDialog("gws sync", ["sync"], "/hub")).rejects.toThrow("IPC 失败");
+    expect(store.history).toHaveLength(0);
+    expect(mocks.handlers.size).toBe(0);
+    expect(mocks.replayOutput).not.toHaveBeenCalled();
+  });
+});
+
+describe("cmd store 监听器生命周期（run 终态后拆除，防长会话泄漏）", () => {
+  it("exit 事件后三个订阅被拆除（setTimeout 0 让一拍）：两次 exec 监听表不残留", async () => {
+    const store = useCmdStore();
+    mocks.runGwsStream.mockResolvedValueOnce(1);
+    await store.exec("a", ["a"], "/hub");
+    emit("gws-exit:1", { code: 0 });
+    mocks.runGwsStream.mockResolvedValueOnce(2);
+    await store.exec("b", ["b"], "/hub");
+    emit("gws-exit:2", { code: 1 });
+
+    // 两次 exec × 3 个订阅全部拆除：监听表清空（而非随 exec 次数累积）
+    // 注：前序测试遗留的清理定时器也会在此期间触发并向 unlistened 追加记录
+    //（身份检查使其对 handlers 无害），故断言以 handlers 清空 + 6 个事件名齐全为准
+    await vi.waitFor(() => expect(mocks.handlers.size).toBe(0));
+    const names = new Set(mocks.unlistened);
+    for (const n of [
+      "gws-output:1", "gws-exit:1", "gws-confirm:1",
+      "gws-output:2", "gws-exit:2", "gws-confirm:2",
+    ]) {
+      expect(names.has(n)).toBe(true);
+    }
+  });
+
+  it("运行中（无 exit）不拆订阅：后续 output/confirm 事件仍可达", async () => {
+    const store = useCmdStore();
+    const run = await store.exec("a", ["a"], "/hub");
+    expect(mocks.handlers.size).toBe(3); // 三个订阅全部在册
+    emit(`gws-output:${RUN_ID}`, { chunk: "hi" });
+    emit(`gws-confirm:${RUN_ID}`, { question: "继续？" });
+    expect(run.output).toBe("hi");
+    expect(run.state).toBe("confirm");
+    expect(store.confirmPending).toEqual({ runId: RUN_ID, question: "继续？" });
+  });
+
+  it("exit 后拆订阅：同 run 迟到的 output 事件不再影响 run（防御性）", async () => {
+    const store = useCmdStore();
+    const run = await store.exec("a", ["a"], "/hub");
+    emit(`gws-exit:${RUN_ID}`, { code: 0 });
+    await vi.waitFor(() => expect(mocks.handlers.size).toBe(0)); // 本 run 订阅已拆
+    emit(`gws-output:${RUN_ID}`, { chunk: "late" }); // 订阅已拆，handler 不在
+    expect(run.output).toBe("");
+    expect(store.history).toHaveLength(1);
+  });
+
+  it("listen 注册中途失败：拆除已注册订阅再抛（不留泄漏）", async () => {
+    const { listen } = await import("@tauri-apps/api/event");
+    // 第 2 个 listen（exit）注册失败：output 已注册、confirm 未到
+    //（vi.mocked 拿真实 listen 类型，handler 需桥接为本文件的 Handler 形状）
+    vi.mocked(listen)
+      .mockImplementationOnce(async (event, handler) => {
+        const name = String(event);
+        const h = handler as unknown as Handler;
+        mocks.handlers.set(name, h);
+        return () => {
+          if (mocks.handlers.get(name) === h) mocks.handlers.delete(name);
+          mocks.unlistened.push(name);
+        };
+      })
+      .mockImplementationOnce(async () => {
+        throw new Error("订阅失败");
+      });
+    const store = useCmdStore();
+    await expect(store.exec("a", ["a"], "/hub")).rejects.toThrow("订阅失败");
+    // 已注册的 output 订阅被拆除，监听表不残留
+    expect(mocks.handlers.size).toBe(0);
+    expect(mocks.unlistened).toContain(`gws-output:${RUN_ID}`);
   });
 });

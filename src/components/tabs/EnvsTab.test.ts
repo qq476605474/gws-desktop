@@ -35,7 +35,10 @@ vi.mock("../../lib/gws-bridge", () => ({
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async (event: string, handler: Handler) => {
     mocks.handlers.set(event, handler);
-    return () => mocks.handlers.delete(event);
+    return () => {
+      // 仅拆除本次注册的 handler：上轮测试遗留的清理定时器触发时不误删新一轮订阅
+      if (mocks.handlers.get(event) === handler) mocks.handlers.delete(event);
+    };
   }),
 }));
 

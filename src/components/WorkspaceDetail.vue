@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from "vue";
 import { confirm } from "@tauri-apps/plugin-dialog";
 import { useHubStore } from "../stores/hub";
-import { useCmdStore } from "../stores/cmd";
+import { useCmdStore, type ExecOpts } from "../stores/cmd";
 import { runGws } from "../lib/gws-bridge";
 import { parseSt, type StResult } from "../lib/parse";
 import PathActions from "./PathActions.vue";
@@ -41,7 +41,11 @@ async function refresh() {
     stErr.value = String(e);
   }
 }
-async function doCmd(label: string, args: string[], cwd: string = wsPath.value, opts?: { confirmTimeoutMs?: number }) {
+/** 第三参：string = cwd（Sync 在 hub 根执行）；对象 = ExecOpts（drop 传 1500）；
+ *  均省略 = cwd 取 wsPath——消除旧签名（cwd,opts）下 drop 调用点的 undefined 占位 */
+async function doCmd(label: string, args: string[], third?: ExecOpts | string) {
+  const opts: ExecOpts = typeof third === "object" ? third : {};
+  const cwd = typeof third === "string" ? third : wsPath.value;
   try {
     const run = await cmd.execDialog(label, args, cwd, opts);
     await cmd.waitDone(run); // 等终态再 refresh，否则命令仍在跑、拿到的是旧数据
@@ -51,6 +55,17 @@ async function doCmd(label: string, args: string[], cwd: string = wsPath.value, 
   }
   // 命令结束后总是 refresh（即使命令失败）：refresh 自身有错误保护
   await refresh();
+}
+/** Push / Merge+Push 会写远程：先原生确认再执行（防误推），其余操作不加确认 */
+async function confirmThenDo(label: string, args: string[], question: string) {
+  let ok = false;
+  try {
+    ok = await confirm(question);
+  } catch {
+    return; // 理论上不 reject；万一异常按取消处理
+  }
+  if (!ok) return;
+  await doCmd(label, args);
 }
 async function removeWs() {
   // macOS WKWebView 下原生 window.confirm 恒返回 false，须用插件的原生对话框
@@ -84,17 +99,21 @@ onMounted(refresh);
       <h2>{{ name }} <small>{{ st?.title }}</small></h2>
       <code>{{ wsPath }}</code>
       <PathActions :path="wsPath" />
+      <!-- 刷新按钮：命令运行中禁用（refresh 无并发保护下的旧结果竞态已有 seq 守卫，
+           禁用主要为避免与命令弹窗的操作交叠）；随时可手动重拉 gws st -->
+      <button :disabled="cmd.isRunning()" @click="refresh" title="重新加载 gws st">刷新</button>
     </header>
     <div class="ops">
       <button :disabled="cmd.isRunning()" @click="doCmd('gws pull', ['pull'])">Pull</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws pull --rebase', ['pull', '--rebase'])">Pull --rebase</button>
-      <button :disabled="cmd.isRunning()" @click="doCmd('gws push', ['push'])">Push</button>
+      <!-- push 写远程：先确认（st 未就绪时分支名回退为“当前分支”） -->
+      <button :disabled="cmd.isRunning()" @click="confirmThenDo('gws push', ['push'], `确认推送 ${st?.branch ?? '当前分支'} 到远程？`)">Push</button>
       <select v-model="mergeEnv">
         <option value="" disabled>选择环境…</option>
         <option v-for="e in hub.envs" :key="e" :value="e">{{ e }}</option>
       </select>
       <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && doCmd(`gws merge ${mergeEnv}`, ['merge', mergeEnv])">Merge（本地）</button>
-      <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && doCmd(`gws merge ${mergeEnv} --push`, ['merge', mergeEnv, '--push'])">Merge+Push</button>
+      <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv} --push`, ['merge', mergeEnv, '--push'], `确认合并到 ${mergeEnv} 并推送到远程？`)">Merge+Push</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws sync-main', ['sync-main', '--yes'])">Sync-main</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws sync', ['sync'], hub.path)">Sync</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws done', ['done'])">Done 校验</button>
@@ -115,7 +134,7 @@ onMounted(refresh);
           <td>{{ m.pushed === false ? "未推送" : `↑${m.ahead ?? 0} ↓${m.behind ?? 0}` }}</td>
           <td>+{{ m.aheadOfMain ?? "?" }}</td>
           <!-- gws drop 是 GUI 下唯一真读 stdin 的命令：保持默认 1.5s 确认超时（其余命令 30s 防假确认） -->
-          <td><button :disabled="cmd.isRunning()" @click="doCmd(`gws drop ${m.name}`, ['drop', m.name], undefined, { confirmTimeoutMs: 1500 })">移除</button></td>
+          <td><button :disabled="cmd.isRunning()" @click="doCmd(`gws drop ${m.name}`, ['drop', m.name], { confirmTimeoutMs: 1500 })">移除</button></td>
         </tr>
       </tbody>
     </table>

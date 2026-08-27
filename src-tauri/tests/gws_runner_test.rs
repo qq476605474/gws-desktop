@@ -324,14 +324,16 @@ fn stream_e2e_confirm_kill() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-/// 自定义长超时：200ms 静默 + 5s 超时 → 不误发 confirm。
-/// 复现慢命令形态（sync 的静默 git 阶段 / repo add 的 clone）：静默远超默认 1.5s。
+/// 自定义长超时：1.8s 静默 + 5s 超时 → 不误发 confirm。
+/// 判别力：1.8s > 默认 1500ms——若 confirm_timeout_ms 参数未生效（回落默认），
+/// 本测试必误发 confirm 而失败（旧版 0.2s 静默对默认阈值同样安全，参数被忽略也绿）。
+/// 裕量：距默认 1500ms +300ms、距参数 5000ms -3.2s。
 #[test]
 fn stream_e2e_long_custom_timeout_no_false_confirm() {
     let app = tauri::test::mock_app();
     let handle = app.app_handle();
     let dir = temp_dir("e2e_timeout_long");
-    let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nsleep 0.2\necho done\n");
+    let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nsleep 1.8\necho done\n");
 
     let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), Some(5000)).unwrap();
     let log = attach(handle, run_id);
@@ -344,7 +346,7 @@ fn stream_e2e_long_custom_timeout_no_false_confirm() {
     // exit 送达后 Confirm 不可能再入队（与 Exit 的临界区互斥）→ 此刻无 confirm 即永无
     assert!(
         log.lock().unwrap().confirm.is_none(),
-        "200ms 静默 + 5s 超时不应误发 confirm，question: {:?}",
+        "1.8s 静默 + 5s 超时不应误发 confirm（若见 confirm 说明超时参数未生效），question: {:?}",
         log.lock().unwrap().confirm
     );
     assert!(log.lock().unwrap().output.contains("done"));
@@ -353,7 +355,9 @@ fn stream_e2e_long_custom_timeout_no_false_confirm() {
     fs::remove_dir_all(&dir).unwrap();
 }
 
-/// 自定义短超时：静默 1s + 100ms 超时 → 发出 confirm 且文案带 "0.1s"。
+/// 自定义短超时：静默 1s + Some(100)（被 clamp 到下限 250ms）→ 发出 confirm 且文案带 "0.25s"。
+/// 顺带端到端验证 clamp 下限生效（未 clamp 的 100ms 与 clamp 后的 250ms 轮询粒度下同拍触发，
+/// 但文案 0.25s 能证明生效的是 clamp 后的值）。
 #[test]
 fn stream_e2e_short_custom_timeout_fires_confirm() {
     let app = tauri::test::mock_app();
@@ -370,7 +374,7 @@ fn stream_e2e_short_custom_timeout_fires_confirm() {
         log.lock().unwrap().confirm.clone()
     });
     assert!(question.contains("等待确认"), "question: {question}");
-    assert!(question.contains("0.1s"), "超时文案应参数化为 0.1s: {question}");
+    assert!(question.contains("0.25s"), "超时文案应为 clamp 后的 0.25s: {question}");
 
     // 进程未被杀：自然退出 code 0（confirm 只是提示，不影响运行）
     let exit = wait_until("exit 事件", Duration::from_secs(10), || {
