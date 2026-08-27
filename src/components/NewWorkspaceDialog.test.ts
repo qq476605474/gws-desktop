@@ -186,4 +186,28 @@ describe("NewWorkspaceDialog", () => {
       ),
     );
   });
+
+  it("分支前缀集合：覆盖市面常用前缀（feature 默认 + bugfix/hotfix/release/support/docs/refactor/test/chore）", () => {
+    mountDialog();
+    const select = el!.querySelector<HTMLSelectElement>("select")!;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual([
+      "feature", "bugfix", "hotfix", "release", "support", "docs", "refactor", "test", "chore",
+    ]);
+    // 文案风格：默认项标注「(默认)」，其余为纯前缀名
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
+      "feature (默认)", "bugfix", "hotfix", "release", "support", "docs", "refactor", "test", "chore",
+    ]);
+  });
+
+  it("前缀 bugfix 提交：非默认前缀传 --prefix bugfix（gws 侧接受任意纯字母前缀）", async () => {
+    mountDialog();
+    setInput(0, "demo");
+    const select = el!.querySelector<HTMLSelectElement>("select")!;
+    select.value = "bugfix";
+    select.dispatchEvent(new Event("change"));
+    await clickCreate();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--prefix", "bugfix"], "/hub", 30000),
+    );
+  });
 });

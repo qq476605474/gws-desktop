@@ -102,6 +102,8 @@ describe("AboutDialog 挂载加载当前版本", () => {
   it("onMounted：gws version 于 hub.path，解析输出显示版本号（在途占位「未知」不显示垃圾值）", async () => {
     const pending: Array<{ resolve: (v: RunResult) => void }> = [];
     mocks.runGws.mockImplementation(() => new Promise<RunResult>((resolve) => pending.push({ resolve })));
+    // 自动检查挂起不返回：本测试聚焦 loadCurrent 在途占位（latest 未回时远端行本就隐藏）
+    mocks.latestGwsVersion.mockImplementation(() => new Promise<string>(() => {}));
     mountDialog(vi.fn());
 
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["version"], "/hub"));
@@ -114,12 +116,12 @@ describe("AboutDialog 挂载加载当前版本", () => {
     expect(el!.textContent).not.toContain("未知");
     expect(el!.querySelector(".error")).toBeNull();
     expect(mocks.runGws).toHaveBeenCalledTimes(1);
-    // 未检查过更新：远端行与更新按钮均不出现
+    // 检查在途（latest 未回）：远端行与更新按钮均不出现
     expect(el!.textContent).not.toContain("远端最新");
     expect(el!.textContent).not.toContain("更新到");
   });
 
-  it("version 非零退出：错误尾行（剥 ANSI）进 err、版本未知；查到 latest 也不出现更新按钮（current 为空）", async () => {
+  it("version 非零退出：错误尾行（剥 ANSI）进 err、版本未知；自动检查照常触发，current 为空不出现更新按钮", async () => {
     const D = "\u001b[2m", N = "\u001b[0m";
     mocks.runGws.mockResolvedValue({ code: 1, output: D + "gws: 版本命令失败" + N + "\n" + D + "gws: 请检查安装" + N });
     mountDialog(vi.fn());
@@ -130,10 +132,11 @@ describe("AboutDialog 挂载加载当前版本", () => {
     expect(el!.textContent).not.toContain("版本命令失败"); // 只取尾行
     expect(el!.textContent).toContain("未知");
 
+    // loadCurrent 失败（err 已设）不拦自动检查：远端行照常渲染；
     // current 为空：即使查到远端最新也无从比较，不出现更新按钮
-    clickButton("检查更新");
     await vi.waitFor(() => expect(el!.textContent).toContain("远端最新"));
     expect(el!.textContent).toContain("0.5.0");
+    expect(mocks.latestGwsVersion).toHaveBeenCalledTimes(1);
     expect(el!.textContent).not.toContain("更新到");
   });
 
@@ -146,34 +149,50 @@ describe("AboutDialog 挂载加载当前版本", () => {
     expect(el!.querySelector(".error")).toBeTruthy();
   });
 
-  it("runGws reject：err = String(e)，不崩、版本未知", async () => {
+  it("runGws reject：err = String(e)，不崩、版本未知；自动检查仍触发（远端信息独立有价值）", async () => {
     mocks.runGws.mockRejectedValue(new Error("invoke 失败"));
     mountDialog(vi.fn());
 
     await vi.waitFor(() => expect(el!.textContent).toContain("Error: invoke 失败"));
     expect(el!.textContent).toContain("未知");
+    await vi.waitFor(() => expect(el!.textContent).toContain("远端最新")); // 检查成功，version err 保留
+    expect(el!.querySelector(".error")!.textContent).toContain("invoke 失败");
   });
 });
 
 describe("AboutDialog 检查更新", () => {
-  it("latest 与 current 不同：显示远端最新与「更新到」按钮，无「已是最新」", async () => {
+  it("打开自动检查：loadCurrent 完成后才调 latestGwsVersion（已是最新徽标须 current 已知），远端行与更新按钮渲染", async () => {
+    const pending: Array<{ resolve: (v: RunResult) => void }> = [];
+    mocks.runGws.mockImplementation(() => new Promise<RunResult>((resolve) => pending.push({ resolve })));
     mountDialog(vi.fn());
-    await vi.waitFor(() => expect(el!.textContent).toContain("0.4.2"));
 
-    clickButton("检查更新");
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["version"], "/hub"));
+    expect(mocks.latestGwsVersion).not.toHaveBeenCalled(); // loadCurrent 未决：检查不抢跑
+
+    pending[0]!.resolve({ code: 0, output: "gws 0.4.2" });
+    await vi.waitFor(() => expect(mocks.latestGwsVersion).toHaveBeenCalledTimes(1)); // 无需手动点击
     await vi.waitFor(() => expect(el!.textContent).toContain("远端最新"));
     expect(el!.textContent).toContain("0.5.0");
     expect(button("更新到 0.5.0")).toBeTruthy();
     expect(el!.textContent).not.toContain("已是最新");
   });
 
-  it("latest 与 current 相同：显示「已是最新版本」，无更新按钮", async () => {
-    mocks.latestGwsVersion.mockResolvedValue("0.4.2");
+  it("手动重查入口保留：点「检查更新」再查一次，latest 与 current 不同时显示远端最新与「更新到」按钮，无「已是最新」", async () => {
     mountDialog(vi.fn());
     await vi.waitFor(() => expect(el!.textContent).toContain("0.4.2"));
 
     clickButton("检查更新");
-    await vi.waitFor(() => expect(el!.textContent).toContain("已是最新版本"));
+    await vi.waitFor(() => expect(mocks.latestGwsVersion).toHaveBeenCalledTimes(2)); // 自动 1 + 手动重查 1
+    await vi.waitFor(() => expect(el!.textContent).toContain("远端最新"));
+    expect(el!.textContent).toContain("0.5.0");
+    expect(button("更新到 0.5.0")).toBeTruthy();
+    expect(el!.textContent).not.toContain("已是最新");
+  });
+
+  it("latest 与 current 相同：打开自动检查后直接显示「已是最新版本」，无更新按钮", async () => {
+    mocks.latestGwsVersion.mockResolvedValue("0.4.2");
+    mountDialog(vi.fn());
+    await vi.waitFor(() => expect(el!.textContent).toContain("已是最新版本")); // 无需手动点击
     expect(el!.textContent).not.toContain("更新到");
   });
 
@@ -200,13 +219,12 @@ describe("AboutDialog 检查更新", () => {
     expect(el!.textContent).not.toContain("更新到");
   });
 
-  it("检查在途：按钮「检查中…」且禁用，关闭仍可用（检查无副作用）；完成后恢复", async () => {
+  it("检查在途（打开自动检查）：按钮「检查中…」且禁用，关闭仍可用（检查无副作用）；完成后恢复", async () => {
     let release!: (v: string) => void;
     mocks.latestGwsVersion.mockImplementation(() => new Promise<string>((r) => (release = r)));
     mountDialog(vi.fn());
-    await vi.waitFor(() => expect(el!.textContent).toContain("0.4.2"));
 
-    clickButton("检查更新");
+    // 打开即自动检查：无需手动点击即进入在途态
     await vi.waitFor(() => expect(button("检查中…")).toBeTruthy());
     expect(button("检查中…").disabled).toBe(true);
     expect(button("关闭").disabled).toBe(false); // 检查在途允许关闭
@@ -216,17 +234,14 @@ describe("AboutDialog 检查更新", () => {
     expect(button("检查更新").disabled).toBe(false);
   });
 
-  it("latest 复位序列：首查成功出更新按钮后重查失败 → err 提示，远端行与「更新到」按钮消失", async () => {
+  it("latest 复位序列：自动首查成功出更新按钮后手动重查失败 → err 提示，远端行与「更新到」按钮消失", async () => {
     mocks.latestGwsVersion
       .mockResolvedValueOnce("0.5.0")
       .mockRejectedValueOnce("获取最新版本失败: curl 退出码 7");
     mountDialog(vi.fn());
-    await vi.waitFor(() => expect(el!.textContent).toContain("0.4.2"));
+    await vi.waitFor(() => expect(button("更新到 0.5.0")).toBeTruthy()); // 自动首查成功：更新按钮出现
 
-    clickButton("检查更新");
-    await vi.waitFor(() => expect(button("更新到 0.5.0")).toBeTruthy()); // 首查成功：更新按钮出现
-
-    clickButton("检查更新");
+    clickButton("检查更新"); // 手动重查失败
     await vi.waitFor(() =>
       expect(el!.textContent).toContain("检查更新失败: 获取最新版本失败: curl 退出码 7"),
     );
@@ -235,17 +250,17 @@ describe("AboutDialog 检查更新", () => {
     expect(el!.querySelector(".error")).toBeTruthy();
   });
 
-  it("check 双击守卫：同步第二击被入口守卫拦截，latestGwsVersion 只调一次", async () => {
+  it("check 双击守卫：自动检查完成后同步双击，第二击被入口守卫拦截（latestGwsVersion 恰调 2 次：自动 + 首击）", async () => {
     mountDialog(vi.fn());
-    await vi.waitFor(() => expect(el!.textContent).toContain("0.4.2"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("远端最新")); // 先等自动检查完成
 
     // 两击同任务同步派发，落在 Vue patch 滞后窗口内（disabled 尚未落到 DOM），第二击
     // 须靠 check 入口守卫的 checking 分支拦截——与 update 双击守卫对称
     clickButton("检查更新");
     clickButton("检查更新");
     await new Promise((r) => setTimeout(r, 0));
-    expect(mocks.latestGwsVersion).toHaveBeenCalledTimes(1);
-    await vi.waitFor(() => expect(el!.textContent).toContain("远端最新")); // 首次检查正常完成
+    expect(mocks.latestGwsVersion).toHaveBeenCalledTimes(2); // 自动 1 + 首击 1，第二击未多发
+    await vi.waitFor(() => expect(el!.textContent).toContain("远端最新")); // 手动重查正常完成
   });
 });
 

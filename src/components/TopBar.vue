@@ -37,7 +37,7 @@ async function switchHub() {
       <button :class="{ active: tab === 'docs' }" @click="emit('update:tab', 'docs')">文档</button>
     </nav>
     <span class="spacer" />
-    <button @click="emit('open-about')">About gws CLI</button>
+    <button @click="emit('open-about')">当前版本</button>
     <button @click="emit('open-settings')">设置</button>
   </header>
 </template>

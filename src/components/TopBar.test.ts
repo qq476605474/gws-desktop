@@ -26,14 +26,15 @@ import TopBar from "./TopBar.vue";
 let app: App | null = null;
 let el: HTMLElement | null = null;
 
-function mountTopBar() {
+/** 挂载 TopBar（tab=ws）；onOpenAbout 收集 About 入口的 open-about emit */
+function mountTopBar(onOpenAbout?: () => void) {
   const pinia = createPinia();
   setActivePinia(pinia);
   const hub = useHubStore();
   hub.setHub("/hub");
   el = document.createElement("div");
   document.body.appendChild(el);
-  app = createApp(TopBar, { tab: "ws" });
+  app = createApp(TopBar, { tab: "ws", onOpenAbout });
   app.use(pinia);
   app.mount(el);
 }
@@ -100,5 +101,19 @@ describe("TopBar hub 路径按钮防误触", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(mocks.confirm).not.toHaveBeenCalled();
     expect(mocks.navigate).not.toHaveBeenCalled();
+  });
+});
+
+describe("TopBar About 入口", () => {
+  it("按钮文案「当前版本」（原 About gws CLI）：点击 emit open-about，不经 confirm", async () => {
+    const opened = vi.fn();
+    mountTopBar(opened);
+    const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === "当前版本");
+    expect(btn).toBeTruthy(); // 旧文案已替换
+    btn!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(mocks.confirm).not.toHaveBeenCalled(); // 仅 hub 切换需 confirm
   });
 });

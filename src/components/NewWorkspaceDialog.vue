@@ -52,7 +52,14 @@ async function create() {
       <label>分支前缀
         <select v-model="prefix">
           <option value="feature">feature (默认)</option>
+          <option value="bugfix">bugfix</option>
           <option value="hotfix">hotfix</option>
+          <option value="release">release</option>
+          <option value="support">support</option>
+          <option value="docs">docs</option>
+          <option value="refactor">refactor</option>
+          <option value="test">test</option>
+          <option value="chore">chore</option>
         </select>
       </label>
       <label>完全自定义分支名 <input v-model="customBranch" placeholder="留空则用前缀-日期-名称" /></label>

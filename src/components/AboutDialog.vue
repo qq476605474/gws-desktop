@@ -32,7 +32,13 @@ async function loadCurrent() {
     err.value = String(e);
   }
 }
-onMounted(loadCurrent);
+// 打开即自动检查更新：顺序等待 loadCurrent——「已是最新」徽标须 current 与 latest 都已知；
+// loadCurrent 失败（err 已设）仍照常 check（远端版本信息独立有价值），check 失败照旧写 err
+// （单槽显示最新错误）。既有守卫/错误处理不变，手动「检查更新」保留作重查入口
+onMounted(async () => {
+  await loadCurrent();
+  await check();
+});
 
 async function check() {
   // 入口守卫：镜像 update——disabled 已防真实用户，此处防程序化双击（同步第二击落在
