@@ -382,4 +382,20 @@ describe("NewWorkspaceDialog 目录名与分支名独立（用户反馈 #5/#11�
     await nextTick();
     expect(el!.textContent).not.toContain("名称未填");
   });
+
+  it("名称含中文且未填自定义分支：提示默认分支将含中文（用户反馈：两字段语义不同，前者组合默认分支、后者填完整分支名）", async () => {
+    mountDialog();
+    setInput(0, "收银台改版");
+    await nextTick();
+    expect(el!.textContent).toContain("名称含中文且未填自定义分支");
+    // 填了完整分支名后提示消失
+    setCustomBranch("feature-20260828-checkout-revamp");
+    await nextTick();
+    expect(el!.textContent).not.toContain("名称含中文且未填自定义分支");
+    // 英文名不触发提示
+    setCustomBranch("");
+    setInput(0, "checkout-revamp");
+    await nextTick();
+    expect(el!.textContent).not.toContain("名称含中文且未填自定义分支");
+  });
 });

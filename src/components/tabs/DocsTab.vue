@@ -104,6 +104,17 @@ async function refresh() {
   }
 }
 
+/** 打开新建文档弹窗：doc new 写死当前工作区 docdir，根文档视图下点入口给出
+ *  指引而非置灰——置灰无解释，用户不知道要先选需求 */
+function openNew() {
+  if (cmd.isRunning()) return;
+  if (isHubData.value || !docsWs.value) {
+    toast("文档归属需求目录：请先在筛选中选择一个需求");
+    return;
+  }
+  showNew.value = true;
+}
+
 /** 新建文档弹窗关闭即刷新：创建成功/失败/取消统一走此路径（模式同 ReposTab.onAddClose） */
 async function onNewClose() {
   showNew.value = false;
@@ -186,8 +197,8 @@ onMounted(refresh);
         <option :value="HUB_ROOT">根文档</option>
         <option v-for="w in hub.workspaces.filter((w) => w.name !== HUB_ROOT)" :key="w.name" :value="w.name">{{ w.name }}</option>
       </select>
-      <!-- doc new 写死当前工作区 docdir：hub 根文档不可新建，按钮随归属禁用（弹窗内再兜底） -->
-      <button class="primary" :disabled="isHubData || cmd.isRunning()" @click="showNew = true">+ 新建文档</button>
+      <!-- doc new 写死当前工作区 docdir：根文档视图由 openNew 指引拦截，弹窗只在 ws 归属挂载 -->
+      <button class="primary" :disabled="cmd.isRunning()" title="文档创建在所选需求的目录下" @click="openNew">+ 新建文档</button>
       <!-- doc commit 实为整个 hub 文档仓库的 git add -A（与单行文件无关），收敛为工具栏统一入口；hub 根文档亦可提交 -->
       <button :disabled="cmd.isRunning()" @click="commit">commit 全部文档</button>
     </div>

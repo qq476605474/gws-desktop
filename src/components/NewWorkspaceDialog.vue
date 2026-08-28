@@ -67,10 +67,11 @@ async function create() {
       <h3>新建需求</h3>
       <!-- gws new 的名称是必填位置参数（无留空反推：留空直接报用法错误）；
            默认分支 = <前缀>-<日期YYYYMMDD>-<名称>，标题缺省同名称 -->
-      <!-- 名称与自定义分支独立成两列：目录名可中文、分支名保持英文（用户反馈 #11）；
-           名称留空但有自定义分支时按 gws get 同款规则反推 -->
+      <!-- 名称（目录名，可中文）与自定义分支（完整分支名，全量覆盖默认拼接）两个字段独立；
+           名称留空但有自定义分支时按 gws get 同款规则从分支名反推目录名 -->
       <label>名称 <input v-model="nameInput" autocapitalize="off" spellcheck="false" placeholder="目录名（可中文），如 收银台改版；留空则从分支名反推" /></label>
       <p v-if="customBranch.trim() && !nameInput.trim()" class="muted">名称未填：目录名将从分支名反推为 {{ derivedName }}</p>
+      <p v-if="!customBranch.trim() && /[\u4e00-\u9fff]/.test(nameInput.trim())" class="muted">名称含中文且未填自定义分支：默认分支将含中文，如需英文分支请在下方填完整分支名</p>
       <label>标题 <input v-model="title" autocapitalize="off" spellcheck="false" placeholder="中文标题（可选，默认同名称）" /></label>
       <label>分支前缀
         <select v-model="prefix">
@@ -85,7 +86,7 @@ async function create() {
           <option value="chore">chore</option>
         </select>
       </label>
-      <label>自定义分支 <input v-model="customBranch" autocapitalize="off" spellcheck="false" placeholder="英文分支名（可选），留空则用前缀-日期-名称" /></label>
+      <label>自定义分支 <input v-model="customBranch" autocapitalize="off" spellcheck="false" placeholder="完整分支名（可选），如 feature-20260828-test；留空则用前缀-日期-名称" /></label>
       <!-- gws new --from 基线[,基线]...：可多次/逗号分隔，顺序即优先级，主干自动兜底 -->
       <label>基线来源 <input v-model="fromInput" autocapitalize="off" spellcheck="false" placeholder="可选，如 需求A 阶段2（空格/逗号分隔多个，留空=主干）" /></label>
       <fieldset>

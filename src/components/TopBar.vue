@@ -19,7 +19,6 @@ const showSwitch = ref(false);
 <template>
   <header class="topbar">
     <span class="brand">GwsDesk</span>
-    <button class="hub" :title="hub.path || '选择 Hub'" @click="showSwitch = true">切换</button>
     <nav>
       <button :class="{ active: tab === 'ws' }" @click="emit('update:tab', 'ws')">需求</button>
       <button :class="{ active: tab === 'repos' }" @click="emit('update:tab', 'repos')">仓库</button>
@@ -27,6 +26,7 @@ const showSwitch = ref(false);
       <button :class="{ active: tab === 'docs' }" @click="emit('update:tab', 'docs')">文档</button>
     </nav>
     <span class="spacer" />
+    <button :title="hub.path || '选择 Hub'" @click="showSwitch = true">切换</button>
     <button @click="emit('open-about')">当前版本</button>
     <button @click="emit('open-settings')">设置</button>
   </header>

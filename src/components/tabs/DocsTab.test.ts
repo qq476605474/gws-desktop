@@ -21,6 +21,9 @@ const mocks = vi.hoisted(() => ({
   openPath: vi.fn<(path: string) => Promise<void>>(),
   copyText: vi.fn<(text: string) => Promise<void>>(),
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
+  // toast 是模块级 reactive 队列、由 App.vue 挂的 ToastList 渲染——单测 DOM 里没有它，
+  // mock 掉后断言调用参数而非 DOM 文本
+  toast: vi.fn<(msg: string) => void>(),
   /** 按事件名保存 listen 注册的 handler，测试中手动触发以模拟 gws-exit 事件 */
   handlers: new Map<string, Handler>(),
 }));
@@ -54,6 +57,10 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 // confirmBox（自绘中文确认框）mock：与原 plugin-dialog confirm 同签名，测试体无感
 vi.mock("../../lib/confirm", () => ({
   confirmBox: mocks.confirm,
+}));
+
+vi.mock("../../lib/toast", () => ({
+  toast: mocks.toast,
 }));
 
 vi.mock("@tauri-apps/plugin-store", () => ({
@@ -174,6 +181,7 @@ beforeEach(() => {
   mocks.confirm.mockResolvedValue(true);
   mocks.openPath.mockResolvedValue(undefined);
   mocks.copyText.mockResolvedValue(undefined);
+  mocks.toast.mockClear();
 });
 
 afterEach(() => {
@@ -390,10 +398,14 @@ describe("DocsTab 根文档源（默认）", () => {
     // 操作列保留（📋 复制文件路径）但无上传按钮：doc push 写死工作区 docdir，hub 根文档无上传语义
     expect(el!.querySelector("thead")!.textContent).toContain("操作");
     expect(Array.from(el!.querySelectorAll("button")).filter((b) => b.textContent?.trim() === "上传")).toHaveLength(0);
-    // doc new 是 ws 级：新建按钮随 hub 归属禁用（输入框已挪入弹窗）
+    // doc new 是 ws 级：根文档视图按钮不再置灰（置灰无解释），点击给出选需求的指引
     const newBtn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "+ 新建文档")!;
-    expect(newBtn.disabled).toBe(true);
+    expect(newBtn.disabled).toBe(false);
+    newBtn.click();
+    // toast 不在组件 DOM 里（App.vue 的 ToastList 渲染），断言 mock 调用参数
+    expect(mocks.toast).toHaveBeenCalledWith("文档归属需求目录：请先在筛选中选择一个需求");
+    expect(el!.querySelector(".dialog")).toBeNull(); // 不开弹窗
     // commit 全部文档保留可用
     const commitBtn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "commit 全部文档")!;
