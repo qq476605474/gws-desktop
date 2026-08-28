@@ -22,21 +22,30 @@ const prefix = ref("feature");
 const branchName = ref("");
 const customBranch = ref("");
 
+/** 切换分支方式时清空另一组输入：隐藏字段的残留值不该再出现在提交参数里 */
+function onModeChange() {
+  if (branchMode.value === "compose") {
+    customBranch.value = "";
+  } else {
+    prefix.value = "feature";
+    branchName.value = "";
+  }
+}
+
 function today(): string {
   const d = new Date();
   return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
 }
 /** 组合模式的完整分支（提交即此值）：分支名留空退回名称作后缀（= gws 默认拼接） */
 const composedBranch = computed(() => {
-  const p = prefix.value.trim() || "feature";
-  return `${p}-${today()}-${branchName.value.trim() || nameInput.value.trim()}`;
+  return `${prefix.value}-${today()}-${branchName.value.trim() || nameInput.value.trim()}`;
 });
 /** 基线来源（--from）：空格或逗号分隔可填多个，顺序即优先级（主干自动兜底） */
 const froms = computed(() => fromInput.value.split(/[\s,]+/).filter(Boolean));
-/** 创建可用：名称必填；组合模式前缀必填，完整模式分支必填；模块恒必选 */
+/** 创建可用：名称必填；完整模式分支必填（组合模式前缀是固定 select 恒有值）；模块恒必选 */
 const canCreate = computed(() => {
   if (!nameInput.value.trim() || !modules.value.length) return false;
-  return branchMode.value === "compose" ? !!prefix.value.trim() : !!customBranch.value.trim();
+  return branchMode.value === "compose" ? true : !!customBranch.value.trim();
 });
 
 async function create() {
@@ -77,14 +86,17 @@ async function create() {
       <label>名称 <input v-model="nameInput" autocapitalize="off" spellcheck="false" placeholder="目录名（必填，可中文），如 收银台改版" /></label>
       <div class="field-row">分支方式
         <span class="radios">
-          <label class="inline"><input type="radio" value="compose" v-model="branchMode" />前缀组合</label>
-          <label class="inline"><input type="radio" value="full" v-model="branchMode" />完整分支名</label>
+          <label class="inline"><input type="radio" value="compose" v-model="branchMode" @change="onModeChange" />前缀组合</label>
+          <label class="inline"><input type="radio" value="full" v-model="branchMode" @change="onModeChange" />完整分支名</label>
         </span>
       </div>
       <template v-if="branchMode === 'compose'">
-        <label>前缀 <input v-model="prefix" autocapitalize="off" spellcheck="false" list="prefix-list" placeholder="英文前缀，如 feature" /></label>
-        <!-- datalist 放 label 外：label 是两列网格，非 none 元素会被当成网格项错位 -->
-        <datalist id="prefix-list"><option v-for="p in PREFIXES" :key="p" :value="p" /></datalist>
+        <!-- 前缀固定下拉（用户反馈：datalist 输入过滤选中后看不到其他项）；默认 feature -->
+        <label>前缀
+          <select v-model="prefix">
+            <option v-for="p in PREFIXES" :key="p" :value="p">{{ p === "feature" ? "feature (默认)" : p }}</option>
+          </select>
+        </label>
         <label>分支名 <input v-model="branchName" autocapitalize="off" spellcheck="false" placeholder="英文后缀，如 checkout-revamp（留空用名称）" /></label>
         <p class="muted">分支：{{ composedBranch }}</p>
       </template>
@@ -117,7 +129,18 @@ input:not([type="checkbox"]):not([type="radio"]), select { max-width: none; heig
 /* 分支方式行与普通 label 同构两列；单选组与行内复选框不受两列网格约束 */
 .field-row { display: grid; grid-template-columns: 5em 1fr; gap: 8px; align-items: center; font-size: 13px; }
 .radios { display: flex; gap: 16px; }
-label.inline { display: flex; align-items: center; gap: 6px; }
+/* 全局 input 规则（width:100%/min-height:32px）会把 radio 撑成大控件：
+   与 checkbox 同款显式压缩成 15px 圆点（base.css 只豁免了 checkbox） */
+input[type="radio"] {
+  min-height: 0;
+  width: 15px;
+  height: 15px;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--primary);
+}
+/* 单选文字不吃控件色：label 的 grid/flex 布局下文字直接继承 --fg */
+label.inline { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--fg); white-space: nowrap; }
 /* 模块勾选列表仍是行内 checkbox 行，不进两列网格 */
 fieldset label { display: flex; align-items: center; gap: 6px; }
 /* 滚动叶子区：contain 防模块列表滚到底后滚动链穿透 */

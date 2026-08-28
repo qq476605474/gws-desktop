@@ -80,7 +80,12 @@ function inputByPlaceholder(fragment: string): HTMLInputElement {
 }
 
 function setName(v: string) { const i = inputByPlaceholder("目录名"); i.value = v; i.dispatchEvent(new Event("input")); }
-function setPrefix(v: string) { const i = inputByPlaceholder("英文前缀"); i.value = v; i.dispatchEvent(new Event("input")); }
+/** 组合模式前缀下拉切值（固定 9 选项，select 无自由输入——用户反馈：datalist 过滤后看不到其他项） */
+function setPrefix(v: string) {
+  const sel = el!.querySelector<HTMLSelectElement>("select")!;
+  sel.value = v;
+  sel.dispatchEvent(new Event("change"));
+}
 function setSuffix(v: string) { const i = inputByPlaceholder("英文后缀"); i.value = v; i.dispatchEvent(new Event("input")); }
 function setFullBranch(v: string) { const i = inputByPlaceholder("如 feature-20260828"); i.value = v; i.dispatchEvent(new Event("input")); }
 function setTitle(v: string) { const i = inputByPlaceholder("中文标题"); i.value = v; i.dispatchEvent(new Event("input")); }
@@ -168,22 +173,6 @@ describe("NewWorkspaceDialog", () => {
     await vi.waitFor(() => expect(btn.disabled).toBe(true));
     setFullBranch("feature-20260828-demo");
     await vi.waitFor(() => expect(btn.disabled).toBe(false));
-  });
-
-  it("组合模式前缀清空禁用创建（空前缀拼出的分支以 - 开头不合法）", async () => {
-    mountDialog();
-    setName("demo");
-    await checkModule("order-service");
-    await vi.waitFor(() => {
-      const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
-        .find((b) => b.textContent?.trim() === "创建")!;
-      return expect(btn.disabled).toBe(false);
-    });
-    setPrefix("");
-    await nextTick();
-    const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
-      .find((b) => b.textContent?.trim() === "创建")!;
-    expect(btn.disabled).toBe(true);
   });
 
   it("命令成功（exit 0）：created 先于 close 通知（父组件先刷新列表再卸载弹窗）", async () => {
@@ -292,30 +281,44 @@ describe("NewWorkspaceDialog 分支两种填法（用户反馈 #12：拆开填�
     );
   });
 
-  it("两模式互斥：同一时刻只渲染一组的输入（组合=前缀+分支名，完整=整支输入）", async () => {
+  it("两模式互斥：同一时刻只渲染一组的输入，切换时清空另一组残留值", async () => {
     mountDialog();
-    // 默认组合模式：前缀/分支名在，完整分支名输入不在
-    expect(() => inputByPlaceholder("英文前缀")).not.toThrow();
+    // 默认组合模式：前缀下拉/分支名在，完整分支名输入不在
+    expect(el!.querySelector("select")).toBeTruthy();
     expect(() => inputByPlaceholder("英文后缀")).not.toThrow();
     expect(() => inputByPlaceholder("如 feature-20260828")).toThrow();
+    setPrefix("hotfix");
+    setSuffix("checkout-revamp");
     await switchMode("full");
     expect(() => inputByPlaceholder("如 feature-20260828")).not.toThrow();
-    expect(() => inputByPlaceholder("英文前缀")).toThrow();
+    expect(el!.querySelector("select")).toBeNull();
     expect(() => inputByPlaceholder("英文后缀")).toThrow();
-    // 切回组合模式：字段回到视野（各模式输入值保留，不因切换丢失）
+    // 切回组合模式：字段回到视野，此前的残留值已被清空（前缀回默认、后缀空）
     await switchMode("compose");
-    expect(() => inputByPlaceholder("英文前缀")).not.toThrow();
+    expect(el!.querySelector<HTMLSelectElement>("select")!.value).toBe("feature");
+    expect(inputByPlaceholder("英文后缀").value).toBe("");
+    // 反向同理：完整分支名的残留值切走后被清空
+    await switchMode("full");
+    setFullBranch("feature-20260828-demo");
+    await switchMode("compose");
+    await switchMode("full");
+    expect(inputByPlaceholder("如 feature-20260828").value).toBe("");
   });
 
-  it("前缀建议 datalist：覆盖市面常用前缀（feature 默认 + bugfix/hotfix/release/support/docs/refactor/test/chore）", () => {
+  it("组合模式前缀固定下拉：默认 feature，覆盖市面常用前缀，切换即改预览与提交值", async () => {
     mountDialog();
-    const options = Array.from(el!.querySelectorAll("#prefix-list option"));
-    expect(options.map((o) => o.getAttribute("value"))).toEqual([
+    const sel = el!.querySelector<HTMLSelectElement>("select")!;
+    expect(sel.value).toBe("feature"); // 默认
+    expect(Array.from(sel.options).map((o) => o.value)).toEqual([
       "feature", "bugfix", "hotfix", "release", "support", "docs", "refactor", "test", "chore",
     ]);
-    // 前缀输入框是自由文本（datalist 仅建议）：非列表值可直接填
-    setPrefix("release2");
-    expect(inputByPlaceholder("英文前缀").value).toBe("release2");
+    // 默认项文案标注「(默认)」
+    expect(sel.options[0].textContent).toContain("(默认)");
+    // 切前缀即时改预览
+    setName("demo");
+    setPrefix("hotfix");
+    await nextTick();
+    expect(el!.textContent).toContain(`分支：hotfix-${today()}-demo`);
   });
 
   it("参数拼装：标题/基线按需附加，--branch 恒传（组合模式拼接值）", async () => {
