@@ -7,17 +7,18 @@ import { ansiToHtml } from "../lib/ansi";
 const cmd = useCmdStore();
 const pre = ref<HTMLPreElement | null>(null);
 
-// 输出增长时自动滚到底：贴底跟随——用户上滚阅读旧输出时不强拉，
-// 只有停在底部附近（≤40px）才继续跟随新输出
+// 输出增长时自动滚到底：贴底跟随——用户上滚阅读旧输出时不强拉。
+// 是否贴底以更新前的旧布局判定（watch 默认 pre-flush，同步段读到的还是旧 DOM）：
+// 若以更新后判定，首块输出超一屏时距离恒 >40px，从未滚动过的用户会被误判为
+// 主动上滚而永久停止跟随
 watch(
   () => cmd.dialogRun?.output,
   async () => {
-    await nextTick();
     const el = pre.value;
     if (!el) return;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight <= 40) {
-      el.scrollTop = el.scrollHeight;
-    }
+    const stick = el.scrollHeight - el.scrollTop - el.clientHeight <= 40;
+    await nextTick();
+    if (stick) el.scrollTop = el.scrollHeight;
   },
 );
 

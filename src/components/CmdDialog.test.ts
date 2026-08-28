@@ -127,6 +127,55 @@ describe("CmdDialog 渲染", () => {
   });
 });
 
+describe("CmdDialog 输出自动滚动（贴底跟随）", () => {
+  /** happy-dom 无布局：在 pre 上装假尺寸。scrollHeight 随内容长度线性增长——
+   *  watch 更新前读到旧内容对应的高度、更新后读到新高度，正好模拟真实时序 */
+  function mockLayout() {
+    const pre = el!.querySelector("pre")!;
+    Object.defineProperty(pre, "clientHeight", { configurable: true, get: () => 300 });
+    Object.defineProperty(pre, "scrollHeight", {
+      configurable: true,
+      get: () => 300 + (pre.textContent?.length ?? 0) * 10,
+    });
+    return pre;
+  }
+
+  it("首块输出即超一屏仍自动滚到底（更新前贴底判定；修复停在顶部不跟随的 bug）", async () => {
+    mountDialog();
+    await startRun();
+    await nextTick();
+    const pre = mockLayout();
+    // 更新前内容为空：scrollHeight=clientHeight=300、scrollTop=0 → 距离 0 视为贴底；
+    // 更新后内容 60 字符 → scrollHeight=900（超一屏），必须滚到底
+    emit("gws-output:1", { chunk: "x".repeat(60) });
+    await vi.waitFor(() => expect(pre.scrollTop).toBe(900));
+  });
+
+  it("贴底时新输出持续跟随", async () => {
+    mountDialog();
+    await startRun();
+    await nextTick();
+    const pre = mockLayout();
+    emit("gws-output:1", { chunk: "x".repeat(60) });
+    await vi.waitFor(() => expect(pre.scrollTop).toBe(900));
+    emit("gws-output:1", { chunk: "y".repeat(10) });
+    await vi.waitFor(() => expect(pre.scrollTop).toBe(1000));
+  });
+
+  it("用户上滚阅读旧输出时不强拉（距离 >40px 停止跟随）", async () => {
+    mountDialog();
+    await startRun();
+    await nextTick();
+    const pre = mockLayout();
+    emit("gws-output:1", { chunk: "x".repeat(60) });
+    await vi.waitFor(() => expect(pre.scrollTop).toBe(900));
+    pre.scrollTop = 500; // 模拟用户上滚：距底 400 > 40
+    emit("gws-output:1", { chunk: "y".repeat(10) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(pre.scrollTop).toBe(500); // 不被拉回底部
+  });
+});
+
 describe("CmdDialog 终态与关闭", () => {
   it("exit 0 → ✓ 完成、关闭可用；点关闭 → closeDialog 清空、弹窗卸载", async () => {
     mountDialog();
