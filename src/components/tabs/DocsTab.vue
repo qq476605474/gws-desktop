@@ -26,7 +26,6 @@ const docsWs = ref(""); // 数据归属快照：doc ls 成功时随 docs/docDir 
 const showNew = ref(false);
 const docDir = ref("");
 const err = ref("");
-const submitting = ref(false);
 const loading = ref(false);
 const opening = ref(""); // 正在交给系统打开的文件名：读取期间禁用所有 doc-link 防重入/跨行点击
 const isHubData = computed(() => docsWs.value === HUB_ROOT);
@@ -116,25 +115,6 @@ async function onNewClose() {
   await refresh();
 }
 
-async function commit() {
-  // 防双击：同 create，submitting 兜底 exec 的 IPC 往返间隙
-  if (submitting.value || cmd.isRunning()) return;
-  submitting.value = true;
-  try {
-    // cwd 按数据归属取：doc commit 是 hub 级文档仓库的 git add -A，ws 目录与
-    // hub 根都能让 gws 定位到 docs 仓库（hub 根时不能拼 /ws/__hub__——目录不存在）
-    const cwd = isHubData.value ? hub.path : `${hub.path}/ws/${docsWs.value}`;
-    const run = await cmd.execDialog("gws doc commit", ["doc", "commit"], cwd);
-    await cmd.waitDone(run);
-  } catch (e) {
-    // 同 create：错误进展示位，仍刷新
-    err.value = String(e);
-  } finally {
-    submitting.value = false;
-  }
-  await refresh();
-}
-
 /** 文件级操作只留“复制路径”：📂 对文件是打开文件（非预期）、💻 终端对文件无意义；
  *  访达/终端是目录级操作，收敛到上方文档目录行（用户反馈 #10） */
 async function copyFile(file: string) {
@@ -169,8 +149,6 @@ onMounted(refresh);
       </select>
       <!-- 目标目录在弹窗内选（默认=当前筛选），根文档视图也可新建（落 hub docs/ 第一层） -->
       <button class="primary" :disabled="cmd.isRunning()" title="默认创建到当前筛选目录，弹窗内可选" @click="openNew">+ 新建文档</button>
-      <!-- doc commit 实为整个 hub 文档仓库的 git add -A（与单行文件无关），收敛为工具栏统一入口；hub 根文档亦可提交 -->
-      <button :disabled="cmd.isRunning()" @click="commit">commit 全部文档</button>
     </div>
     <p v-if="hub.error || err" class="error">
       {{ hub.error || err }}
