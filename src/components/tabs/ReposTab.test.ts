@@ -79,15 +79,23 @@ function mountTab() {
   app.mount(el);
 }
 
-function setInput(value: string) {
-  const input = el!.querySelector<HTMLInputElement>("input");
-  if (!input) throw new Error("输入框未找到");
+/** 打开添加仓库弹窗（工具栏按钮 → AddRepoDialog 挂载；v-if 渲染须等 nextTick） */
+async function openAddDialog() {
+  clickButton("+ 添加仓库");
+  await nextTick();
+  if (!el!.querySelector(".dialog")) throw new Error("添加仓库弹窗未打开");
+}
+
+/** 弹窗内输入框（v-model 监听 input） */
+function setDialogInput(value: string) {
+  const input = el!.querySelector<HTMLInputElement>(".dialog input");
+  if (!input) throw new Error("弹窗输入框未找到");
   input.value = value;
   input.dispatchEvent(new Event("input"));
 }
 
-function inputValue(): string {
-  return el!.querySelector<HTMLInputElement>("input")!.value;
+function dialogInputValue(): string {
+  return el!.querySelector<HTMLInputElement>(".dialog input")!.value;
 }
 
 function clickButton(text: string) {
@@ -121,11 +129,12 @@ afterEach(() => {
 });
 
 describe("ReposTab", () => {
-  it("addRepos：多 URL 空格分隔展开为 repo add 参数于 hub.path，成功后清空输入并刷新", async () => {
+  it("addRepos：多 URL 空格分隔展开为 repo add 参数于 hub.path，成功后关窗并刷新", async () => {
     mountTab();
-    setInput("https://git.example.com/a.git   https://git.example.com/b.git");
+    await openAddDialog();
+    setDialogInput("https://git.example.com/a.git   https://git.example.com/b.git");
     await nextTick();
-    clickButton("+ 添加仓库");
+    clickButton("添加");
 
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
     expect(mocks.runGwsStream).toHaveBeenCalledWith(
@@ -134,38 +143,42 @@ describe("ReposTab", () => {
       30000,
     );
 
-    // 负向断言：exit 事件未发出、命令未到终态前不得提前 refreshAll（锁死 waitDone→refreshAll 时序）
+    // 负向断言：exit 事件未发出、命令未到终态前不得提前刷新（waitDone→关窗→刷新时序）
     expect(mocks.runGws).not.toHaveBeenCalled();
 
     await exitWith(1, 0);
-    // 等终态后才 refreshAll（waitDone 模式）：三条 ls 均在命令结束后发起
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull()); // 成功关窗
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
-    await nextTick();
-    expect(inputValue()).toBe("");
   });
 
-  it("addRepos：exec reject（IPC 失败）不崩，refreshAll 仍被调，输入保留便于重试", async () => {
+  it("addRepos：exec reject（IPC 失败）不崩：弹窗内联报错、输入保留便于重试；取消后刷新", async () => {
     mountTab();
     mocks.runGwsStream.mockRejectedValueOnce(new Error("invoke 失败"));
-    setInput("https://git.example.com/a.git");
+    await openAddDialog();
+    setDialogInput("https://git.example.com/a.git");
     await nextTick();
-    clickButton("+ 添加仓库");
+    clickButton("添加");
 
+    await vi.waitFor(() => expect(el!.textContent).toContain("invoke 失败"));
+    expect(el!.querySelector(".dialog")).toBeTruthy(); // 不关窗
+    expect(dialogInputValue()).toBe("https://git.example.com/a.git");
+    clickButton("取消");
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
-    await nextTick();
-    expect(inputValue()).toBe("https://git.example.com/a.git");
   });
 
-  it("addRepos：命令失败（非零退出码）不清输入，仍刷新", async () => {
+  it("addRepos：命令失败（非零退出码）不关窗、输入保留；取消后刷新", async () => {
     mountTab();
-    setInput("https://git.example.com/a.git");
+    await openAddDialog();
+    setDialogInput("https://git.example.com/a.git");
     await nextTick();
-    clickButton("+ 添加仓库");
+    clickButton("添加");
 
     await exitWith(1, 1); // repo add 失败
+    await new Promise((r) => setTimeout(r, 0)); // 等 waitDone 链路收尾
+    expect(el!.querySelector(".dialog")).toBeTruthy();
+    expect(dialogInputValue()).toBe("https://git.example.com/a.git");
+    clickButton("取消");
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["repo", "ls"], "/hub"));
-    await nextTick();
-    expect(inputValue()).toBe("https://git.example.com/a.git");
   });
 
   it("sync：于 hub.path 执行 gws sync，结束后刷新", async () => {
@@ -213,11 +226,12 @@ describe("ReposTab", () => {
 
   it("addRepos：双击守卫——首击在途（submitting）时同步第二击不重复 exec", async () => {
     mountTab();
-    setInput("https://git.example.com/a.git");
+    await openAddDialog();
+    setDialogInput("https://git.example.com/a.git");
     await nextTick();
     // 同一任务里同步连点两次：Vue 未及重渲染禁用按钮，第二击只能靠 submitting 守卫拦截
-    clickButton("+ 添加仓库");
-    clickButton("+ 添加仓库");
+    clickButton("添加");
+    clickButton("添加");
 
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
     expect(mocks.runGwsStream).toHaveBeenCalledWith(

@@ -33,8 +33,9 @@ function start() {
 <style scoped>
 .mask { position: fixed; inset: 0; background: var(--mask); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .dialog { background: var(--bg-soft); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 20px; width: 460px; display: flex; flex-direction: column; gap: 8px; }
-label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-input { flex: 1; }
+/* 表单两列对齐（表格样）：标签列固定 5em；控件去全局 320px 上限并锁定 32px 高 */
+label { display: grid; grid-template-columns: 5em 1fr; gap: 8px; align-items: center; font-size: 13px; }
+input { max-width: none; height: var(--control-h); }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .muted { color: var(--fg-muted); font-size: 13px; margin: 0; }
 </style>

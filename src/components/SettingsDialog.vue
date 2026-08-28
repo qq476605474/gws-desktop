@@ -33,7 +33,7 @@ onMounted(async () => {
         </select>
       </label>
       <label>
-        在终端中打开
+        打开终端
         <select v-model="settings.terminal">
           <option v-for="t in terms" :key="t.id" :value="t.id">{{ t.label }}</option>
         </select>
@@ -46,6 +46,8 @@ onMounted(async () => {
 <style scoped>
 .mask { position: fixed; inset: 0; background: var(--mask); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .dialog { background: var(--bg-soft); color: var(--fg); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 24px; width: 420px; }
-label { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+/* 表单两列对齐（表格样）：标签列固定 5em；控件去全局 320px 上限并锁定 32px 高 */
+label { display: grid; grid-template-columns: 5em 1fr; gap: 8px; align-items: center; margin-bottom: 12px; font-size: 13px; }
+select { max-width: none; height: var(--control-h); }
 .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
 </style>

@@ -4,32 +4,22 @@ import { confirm } from "@tauri-apps/plugin-dialog";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
 import PathActions from "../PathActions.vue";
+import AddRepoDialog from "../AddRepoDialog.vue";
 
 const hub = useHubStore();
 const cmd = useCmdStore();
-const input = ref("");
+const showAdd = ref(false);
 const submitting = ref(false);
 
-async function addRepos() {
-  if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
-  const urls = input.value.split(/\s+/).filter(Boolean);
-  if (!urls.length) return;
-  submitting.value = true;
-  try {
-    const run = await cmd.execDialog("gws repo add", ["repo", "add", ...urls], hub.path);
-    // exec 返回时命令仍在跑（事件流异步），须等终态再刷新，否则拿到的是旧列表
-    await cmd.waitDone(run);
-    if (run.state === "done") input.value = ""; // 失败保留输入便于重试
-  } catch {
-    // exec reject（如 IPC 失败）：吞掉避免 unhandled rejection；数据未变，刷新无害
-  } finally {
-    submitting.value = false;
-  }
+/** 弹窗关闭即刷新：添加成功/失败/用户取消统一走此路径——repo add 失败也可能
+ *  部分成功（多 URL 时），不刷新会让列表停留过期状态 */
+async function onAddClose() {
+  showAdd.value = false;
   await hub.refreshAll();
 }
 
 async function sync() {
-  if (submitting.value) return; // 同 addRepos：防本地在途时重复提交
+  if (submitting.value) return; // 防本地在途时重复提交
   submitting.value = true;
   try {
     const run = await cmd.execDialog("gws sync", ["sync"], hub.path);
@@ -65,8 +55,7 @@ async function rm(name: string) {
 <template>
   <div>
     <div class="toolbar">
-      <input v-model="input" :disabled="cmd.isRunning()" autocapitalize="off" spellcheck="false" placeholder="git 地址（可多个，空格分隔）" style="flex:1" />
-      <button :disabled="!input.trim() || cmd.isRunning() || submitting" @click="addRepos">+ 添加仓库</button>
+      <button :disabled="cmd.isRunning()" @click="showAdd = true">+ 添加仓库</button>
       <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">同步最新代码</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
@@ -82,6 +71,7 @@ async function rm(name: string) {
     </div>
     <p v-if="!hub.repos.length && !hub.error" class="muted">(暂无仓库)</p>
     <p v-if="cmd.current?.label === 'gws repo add' && cmd.current.state !== 'failed'" class="hint">添加后点击「同步最新代码」补建 worktree</p>
+    <AddRepoDialog v-if="showAdd" @close="onAddClose" />
   </div>
 </template>
 

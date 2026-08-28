@@ -43,8 +43,10 @@ async function pull() {
   <div class="mask" @click.self="!submitting && emit('close')">
     <div class="dialog">
       <h3>拉取已推送的需求</h3>
-      <label>远程 feature 分支 <input v-model="branch" autocapitalize="off" spellcheck="false" placeholder="feature-20260818-checkout-revamp" /></label>
-      <label>本地需求名 <input v-model="name" autocapitalize="off" spellcheck="false" placeholder="留空自动从分支名反推" /></label>
+      <!-- 本地需求名 = 本地目录名的覆盖项：默认从分支名反推（前缀-日期-名称 → 名称），
+           本地重名或分支名不合规范时才需手填 -->
+      <label>远程分支 <input v-model="branch" autocapitalize="off" spellcheck="false" placeholder="feature-20260818-checkout-revamp" /></label>
+      <label>本地需求名 <input v-model="name" autocapitalize="off" spellcheck="false" placeholder="留空自动从分支名反推；本地重名时改个名" /></label>
       <label>标题 <input v-model="title" autocapitalize="off" spellcheck="false" placeholder="中文标题（可选）" /></label>
       <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">
@@ -58,8 +60,10 @@ async function pull() {
 <style scoped>
 .mask { position: fixed; inset: 0; background: var(--mask); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .dialog { background: var(--bg-soft); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 20px; width: 460px; display: flex; flex-direction: column; gap: 8px; }
-label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-input { flex: 1; }
+/* 表单两列对齐（表格样）：标签列固定 5em，输入列各行右缘对齐；
+   控件去全局 320px 上限并锁定 32px 高 */
+label { display: grid; grid-template-columns: 5em 1fr; gap: 8px; align-items: center; font-size: 13px; }
+input { max-width: none; height: var(--control-h); }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }
 .err { color: var(--danger-text); font-size: 13px; margin: 0; }
 </style>

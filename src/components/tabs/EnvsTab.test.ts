@@ -78,15 +78,14 @@ function mountTab() {
   app.mount(el);
 }
 
-function setInput(value: string) {
-  const input = el!.querySelector<HTMLInputElement>("input");
-  if (!input) throw new Error("输入框未找到");
-  input.value = value;
+/** 打开添加环境弹窗（工具栏按钮 → AddEnvDialog 挂载，v-if 渲染须等 nextTick）并填入环境名 */
+async function openAddDialog(name: string) {
+  clickButton("+ 添加环境");
+  await nextTick();
+  const input = el!.querySelector<HTMLInputElement>(".dialog input");
+  if (!input) throw new Error("添加环境弹窗输入框未找到");
+  input.value = name;
   input.dispatchEvent(new Event("input"));
-}
-
-function inputValue(): string {
-  return el!.querySelector<HTMLInputElement>("input")!.value;
 }
 
 function clickButton(text: string) {
@@ -121,47 +120,49 @@ afterEach(() => {
 });
 
 describe("EnvsTab", () => {
-  it("addEnv：args 与 cwd 正确，成功后清空输入并刷新", async () => {
+  it("addEnv：args 与 cwd 正确，成功后关窗并刷新", async () => {
     mountTab();
-    setInput("uat");
+    await openAddDialog("uat");
     await nextTick();
-    clickButton("+ 添加环境");
+    clickButton("添加");
 
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
     expect(mocks.runGwsStream).toHaveBeenCalledWith(["env", "add", "uat"], "/hub", 30000);
 
-    // 负向断言：exit 事件未发出、命令未到终态前不得提前 refreshAll（锁死 waitDone→refreshAll 时序）
+    // 负向断言：exit 事件未发出、命令未到终态前不得提前刷新（waitDone→关窗→刷新时序）
     expect(mocks.runGws).not.toHaveBeenCalled();
 
     await exitWith(1, 0);
-    // 等终态后才 refreshAll（waitDone 模式）：三条 ls 均在命令结束后发起
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull()); // 成功关窗
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
-    await nextTick();
-    expect(inputValue()).toBe("");
   });
 
-  it("addEnv：exec reject（IPC 失败）不崩，refreshAll 仍被调，输入保留便于重试", async () => {
+  it("addEnv：exec reject（IPC 失败）不崩：弹窗内联报错、输入保留便于重试；取消后刷新", async () => {
     mountTab();
     mocks.runGwsStream.mockRejectedValueOnce(new Error("invoke 失败"));
-    setInput("uat");
+    await openAddDialog("uat");
     await nextTick();
-    clickButton("+ 添加环境");
+    clickButton("添加");
 
+    await vi.waitFor(() => expect(el!.textContent).toContain("invoke 失败"));
+    expect(el!.querySelector(".dialog")).toBeTruthy(); // 不关窗
+    expect(el!.querySelector<HTMLInputElement>(".dialog input")!.value).toBe("uat");
+    clickButton("取消");
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
-    await nextTick();
-    expect(inputValue()).toBe("uat");
   });
 
-  it("addEnv：命令失败（退出码 1）不清输入，仍刷新", async () => {
+  it("addEnv：命令失败（退出码 1）不关窗、输入保留；取消后刷新", async () => {
     mountTab();
-    setInput("uat");
+    await openAddDialog("uat");
     await nextTick();
-    clickButton("+ 添加环境");
+    clickButton("添加");
 
     await exitWith(1, 1); // env add 失败
+    await new Promise((r) => setTimeout(r, 0)); // 等 waitDone 链路收尾
+    expect(el!.querySelector(".dialog")).toBeTruthy();
+    expect(el!.querySelector<HTMLInputElement>(".dialog input")!.value).toBe("uat");
+    clickButton("取消");
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
-    await nextTick();
-    expect(inputValue()).toBe("uat");
   });
 
   it("sync：于 hub.path 执行 gws sync，结束后刷新", async () => {

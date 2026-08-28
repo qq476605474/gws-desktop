@@ -82,7 +82,7 @@ async function create() {
           <option value="chore">chore</option>
         </select>
       </label>
-      <label>完全自定义分支名 <input v-model="customBranch" autocapitalize="off" spellcheck="false" placeholder="留空则用前缀-日期-名称" /></label>
+      <label>自定义分支 <input v-model="customBranch" autocapitalize="off" spellcheck="false" placeholder="留空则用前缀-日期-名称" /></label>
       <!-- gws new --from 基线[,基线]...：可多次/逗号分隔，顺序即优先级，主干自动兜底 -->
       <label>基线来源 <input v-model="fromInput" autocapitalize="off" spellcheck="false" placeholder="可选，如 需求A 阶段2（空格/逗号分隔多个，留空=主干）" /></label>
       <fieldset>
@@ -103,9 +103,12 @@ async function create() {
 <style scoped>
 .mask { position: fixed; inset: 0; background: var(--mask); display: flex; align-items: center; justify-content: center; z-index: 100; }
 .dialog { background: var(--bg-soft); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: 8px; padding: 20px; width: 460px; display: flex; flex-direction: column; gap: 8px; }
-label { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-/* 排除 checkbox：flex:1 会把模块勾选框横向拉满整行（配合 base.css 的 checkbox 定尺寸） */
-input:not([type="checkbox"]), select { flex: 1; }
+/* 表单两列对齐（表格样）：标签列固定 5em，输入列各行右缘对齐；
+   控件去全局 320px 上限并锁定 32px 高，与相邻输入框完全等高 */
+label { display: grid; grid-template-columns: 5em 1fr; gap: 8px; align-items: center; font-size: 13px; }
+input:not([type="checkbox"]), select { max-width: none; height: var(--control-h); }
+/* 模块勾选列表仍是行内 checkbox 行，不进两列网格 */
+fieldset label { display: flex; align-items: center; gap: 6px; }
 /* 滚动叶子区：contain 防模块列表滚到底后滚动链穿透 */
 fieldset { max-height: 160px; overflow: auto; overscroll-behavior: contain; }
 .actions { display: flex; gap: 8px; justify-content: flex-end; }

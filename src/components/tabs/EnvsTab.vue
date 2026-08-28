@@ -5,10 +5,11 @@ import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
 import { listDir } from "../../lib/gws-bridge";
 import PathActions from "../PathActions.vue";
+import AddEnvDialog from "../AddEnvDialog.vue";
 
 const hub = useHubStore();
 const cmd = useCmdStore();
-const newEnv = ref("");
+const showAdd = ref(false);
 const submitting = ref(false);
 
 /** 环境行展开状态（键存在 = 展开）：行点击切换 */
@@ -48,21 +49,9 @@ function invalidateModules() {
   }
 }
 
-async function addEnv() {
-  if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
-  const name = newEnv.value.trim(); // 纯空格输入视同空，避免把空白当分支名传给 gws
-  if (!name) return;
-  submitting.value = true;
-  try {
-    const run = await cmd.execDialog(`gws env add ${name}`, ["env", "add", name], hub.path);
-    // exec 返回时命令仍在跑（事件流异步），须等终态再刷新，否则拿到的是旧列表
-    await cmd.waitDone(run);
-    if (run.state === "done") newEnv.value = ""; // 失败保留输入便于重试
-  } catch {
-    // exec reject（如 IPC 失败）：吞掉避免 unhandled rejection；数据未变，刷新无害
-  } finally {
-    submitting.value = false;
-  }
+/** 弹窗关闭即刷新：添加成功/失败/用户取消统一走此路径 */
+async function onAddClose() {
+  showAdd.value = false;
   await hub.refreshAll();
 }
 
@@ -91,7 +80,7 @@ async function rmEnv(e: string) {
 }
 
 async function sync() {
-  if (submitting.value) return; // 同 addEnv：防本地在途时重复提交
+  if (submitting.value) return; // 防本地在途时重复提交
   submitting.value = true;
   try {
     const run = await cmd.execDialog("gws sync", ["sync"], hub.path);
@@ -109,8 +98,7 @@ async function sync() {
 <template>
   <div>
     <div class="toolbar">
-      <input v-model="newEnv" :disabled="cmd.isRunning()" autocapitalize="off" spellcheck="false" placeholder="环境分支名（如 pre、dev1）" />
-      <button :disabled="!newEnv.trim() || cmd.isRunning() || submitting" @click="addEnv">+ 添加环境</button>
+      <button :disabled="cmd.isRunning()" @click="showAdd = true">+ 添加环境</button>
       <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">同步最新代码</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
@@ -137,6 +125,7 @@ async function sync() {
       </div>
     </div>
     <p v-if="!hub.envs.length && !hub.error" class="muted">(暂无环境)</p>
+    <AddEnvDialog v-if="showAdd" @close="onAddClose" />
   </div>
 </template>
 
