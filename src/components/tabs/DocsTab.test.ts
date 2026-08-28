@@ -194,14 +194,17 @@ afterEach(() => {
 });
 
 describe("DocsTab.refresh", () => {
-  it("默认选根文档：doc ls 于 hub 根，docDir 剥 ANSI 解析、同步状态渲染", async () => {
+  it("默认选根文档：doc ls 于 hub 根，docDir 剥 ANSI 解析、文件行渲染", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
 
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
-    expect(el!.textContent).toContain("● 已同步 (wiki:999)");
-    expect(el!.textContent).toContain("○ 未上传");
+    expect(el!.textContent).toContain("README.md");
+    expect(el!.textContent).toContain("规范.md");
+    // 同步状态列已删（上传走 AI/命令行，界面不展示 Confluence 态）
+    expect(el!.textContent).not.toContain("已同步");
+    expect(el!.textContent).not.toContain("未上传");
     // hub 模式目录操作行落点为 docs/ 根（无 docdir 层），无转义序列残留
     expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs");
     expect(el!.textContent).not.toContain("\u001b");
@@ -234,7 +237,7 @@ describe("DocsTab.refresh", () => {
     expect(el!.textContent).not.toContain("工作区不存在"); // 错误只取尾行展示，首行不进任何位置
   });
 
-  it("切换工作区失败：表格工作区列与行内 push cwd 均指向数据归属的旧工作区（docsWs 快照）", async () => {
+  it("切换工作区失败：表格与 commit cwd 均指向数据归属的旧工作区（docsWs 快照）", async () => {
     mocks.runGws.mockResolvedValueOnce({ code: 0, output: hubDocLsOut() }); // 挂载根文档成功
     mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 切 checkout-revamp 成功
     mocks.runGws.mockResolvedValue({ code: 1, output: "gws: 工作区不存在" });
@@ -248,10 +251,10 @@ describe("DocsTab.refresh", () => {
     // 旧文档表保持自洽：目录行仍是数据归属的 checkout-revamp docdir，而非切换目标 login-crash
     expect(el!.querySelector(".group-row")!.textContent).toContain("docs/2026-08-18-checkout-revamp");
 
-    // 行内"上传"的 cwd 用 docsWs（旧工作区）——旧文件不会 push 到新工作区
-    clickButton("上传");
+    // commit 的 cwd 用 docsWs（旧工作区）——旧文档不会提交到新工作区的上下文
+    clickButton("commit 全部文档");
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp", 30000),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "commit"], "/hub/ws/checkout-revamp", 30000),
     );
     await exitWith(1, 0);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(4)); // 挂载 + 切换×2 + 命令后刷新
@@ -387,7 +390,7 @@ describe("DocsTab.refresh", () => {
 });
 
 describe("DocsTab 根文档源（默认）", () => {
-  it("挂载即根文档：doc ls 于 hub 根 cwd；首行 docs 为正常态，表格渲染 hub 列表且无上传按钮、新建可用、commit 保留", async () => {
+  it("挂载即根文档：doc ls 于 hub 根 cwd；首行 docs 为正常态，表格渲染 hub 列表且无上传按钮/Confluence 列、新建可用、commit 保留", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
@@ -395,9 +398,9 @@ describe("DocsTab 根文档源（默认）", () => {
     // hub 差异：目录操作行落点为 docs/ 根（无 docdir 层），精确断言 code 文本
     expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs");
     expect(el!.querySelector(".error")).toBeNull(); // 首行 "docs" 在 hub 模式不触发哨兵
-    // 操作列保留（📋 复制文件路径）但无上传按钮：doc push 写死工作区 docdir，hub 根文档无上传语义
-    expect(el!.querySelector("thead")!.textContent).toContain("操作");
+    // 上传入口已删（用户反馈：上传走 AI/命令行）：任何视图都不再有上传按钮
     expect(Array.from(el!.querySelectorAll("button")).filter((b) => b.textContent?.trim() === "上传")).toHaveLength(0);
+    expect(el!.querySelector("thead")!.textContent).not.toContain("Confluence");
     // 新建不再被外层校验拦（目标目录弹窗内选，用户反馈 #12）：根文档视图直开弹窗
     const newBtn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "+ 新建文档")!;
@@ -469,7 +472,7 @@ describe("DocsTab 根文档源（默认）", () => {
     expect(mocks.runGws).toHaveBeenLastCalledWith(["doc", "ls"], "/hub");
   });
 
-  it("切回根文档失败：归属快照不动，旧 ws 表格保持自洽（目录行旧 docdir、上传仍可用）", async () => {
+  it("切回根文档失败：归属快照不动，旧 ws 表格保持自洽（目录行旧 docdir、文件操作仍指向旧工作区）", async () => {
     mocks.runGws.mockResolvedValueOnce({ code: 0, output: hubDocLsOut() }); // 挂载根文档成功
     mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 切 checkout-revamp 成功
     mocks.runGws.mockResolvedValue({ code: 1, output: "gws: hub 文档仓库不存在" });
@@ -480,9 +483,12 @@ describe("DocsTab 根文档源（默认）", () => {
 
     switchWs(HUB_ROOT); // doc ls 失败：docsWs/docs/docDir 不动
     await vi.waitFor(() => expect(el!.textContent).toContain("gws: hub 文档仓库不存在"));
-    // 旧 ws 表保持自洽：目录行仍是 checkout-revamp 的 docdir，上传按钮仍可用（归属旧工作区）
+    // 旧 ws 表保持自洽：目录行仍是 checkout-revamp 的 docdir，文件路径仍指向旧工作区 docdir
     expect(el!.querySelector(".group-row")!.textContent).toContain("docs/2026-08-18-checkout-revamp");
-    expect(Array.from(el!.querySelectorAll("button")).filter((b) => b.textContent?.trim() === "上传")).toHaveLength(2);
+    const copy = el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!
+      .querySelector<HTMLButtonElement>('button[title="复制文件路径"]')!;
+    copy.click();
+    await vi.waitFor(() => expect(mocks.copyText).toHaveBeenCalledWith("/hub/docs/2026-08-18-checkout-revamp/技术方案.md"));
   });
 });
 
@@ -622,37 +628,6 @@ describe("DocsTab 命令操作", () => {
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(1)); // 命令结束后恰一次 refresh
   });
 
-  it("push：confirm 确认后才 exec——doc push <file> 于当前工作区，结束后刷新", async () => {
-    await mountWsTab();
-
-    // confirm 挂起：写远程操作未获确认前不得 exec
-    let resolveConfirm!: (v: boolean) => void;
-    mocks.confirm.mockImplementationOnce(() => new Promise<boolean>((r) => { resolveConfirm = r; }));
-    clickButton("上传"); // 首行 技术方案.md
-    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("上传 技术方案.md 到 Confluence？"));
-    expect(mocks.runGwsStream).not.toHaveBeenCalled();
-
-    resolveConfirm(true); // 用户点击“确认”
-    await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp", 30000),
-    );
-    expect(mocks.runGws).not.toHaveBeenCalled(); // 终态前不刷新
-
-    await exitWith(1, 0);
-    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
-  });
-
-  it("push：confirm 取消不发命令、不刷新", async () => {
-    await mountWsTab();
-    mocks.confirm.mockResolvedValueOnce(false);
-
-    clickButton("上传"); // 首行 技术方案.md
-    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledWith("上传 技术方案.md 到 Confluence？"));
-    await new Promise((r) => setTimeout(r, 0)); // 冲微任务：取消分支应已返回
-    expect(mocks.runGwsStream).not.toHaveBeenCalled();
-    expect(mocks.runGws).not.toHaveBeenCalled();
-  });
-
   it("commit：工具栏「commit 全部文档」无文件参数，于数据归属工作区执行，结束后刷新", async () => {
     await mountWsTab();
 
@@ -664,17 +639,17 @@ describe("DocsTab 命令操作", () => {
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
   });
 
-  it("push/commit：已有命令在跑（isRunning）时入口直接返回，不 exec 不刷新", async () => {
+  it("commit：已有命令在跑（isRunning）时入口直接返回，不 exec 不刷新", async () => {
     await mountWsTab();
 
-    clickButton("上传"); // 启动 doc push（current.state=running）
+    clickButton("commit 全部文档"); // 启动 doc commit（current.state=running）
     await vi.waitFor(() => expect(mocks.handlers.get("gws-exit:1")).toBeTruthy());
     // 此时 isRunning()=true；happy-dom 的 click() 不受 disabled 限制，仍会派发事件——
-    // commit 只能靠函数入口守卫拦截
+    // 再点一次只能靠函数入口守卫拦截
     clickButton("commit 全部文档");
     await new Promise((r) => setTimeout(r, 0));
-    expect(mocks.runGwsStream).toHaveBeenCalledTimes(1); // 仅 doc push
-    expect(mocks.runGws).not.toHaveBeenCalled(); // commit 被拦截，push 未终态，均未触发刷新
+    expect(mocks.runGwsStream).toHaveBeenCalledTimes(1); // 仅首次 doc commit
+    expect(mocks.runGws).not.toHaveBeenCalled(); // 第二次被拦截，首次未终态，均未触发刷新
 
     await exitWith(1, 0);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));

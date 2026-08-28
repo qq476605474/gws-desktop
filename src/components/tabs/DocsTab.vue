@@ -7,7 +7,6 @@ import { HUB_ROOT } from "../../lib/consts";
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { confirmBox } from "../../lib/confirm";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
 import { runGws, openPath, copyText } from "../../lib/gws-bridge";
@@ -117,31 +116,6 @@ async function onNewClose() {
   await refresh();
 }
 
-async function push(file: string) {
-  // 防双击：同 create，submitting 兜底 exec 的 IPC 往返间隙
-  if (submitting.value || cmd.isRunning()) return;
-  // doc push 上传 Confluence 是写远程操作：先确认再执行（模式同 EnvsTab.rmEnv）
-  let ok = false;
-  try {
-    ok = await confirmBox(`上传 ${file} 到 Confluence？`);
-  } catch {
-    return; // 理论上不 reject；万一异常按取消处理
-  }
-  if (!ok) return;
-  if (cmd.isRunning()) return; // confirm 弹窗打开期间用户可能已从另一入口启动命令
-  submitting.value = true;
-  try {
-    const run = await cmd.execDialog(`gws doc push ${file}`, ["doc", "push", file], `${hub.path}/ws/${docsWs.value}`);
-    await cmd.waitDone(run);
-  } catch (e) {
-    // 同 create：错误进展示位，仍刷新
-    err.value = String(e);
-  } finally {
-    submitting.value = false;
-  }
-  await refresh();
-}
-
 async function commit() {
   // 防双击：同 create，submitting 兜底 exec 的 IPC 往返间隙
   if (submitting.value || cmd.isRunning()) return;
@@ -205,18 +179,15 @@ onMounted(refresh);
     <!-- 目录级操作（访达/终端/复制路径）落点为文档目录本身；表格不再重复工作区/路径列（用户反馈 #10） -->
     <div v-if="dirPath" class="group-row">📁 <code>{{ dirRel }}</code> <PathActions :path="dirPath" /></div>
     <table v-if="docs.length">
-      <thead><tr><th>文档</th><th>Confluence</th><th>操作</th></tr></thead>
+      <thead><tr><th>文档</th><th>操作</th></tr></thead>
       <tbody>
         <tr v-for="d in docs" :key="d.file">
           <td>
             <!-- 在途打开禁全部行：系统调起窗口无上界（网络盘/大文件），不止被点的那行 -->
             <button class="doc-link" title="用系统默认应用打开" :disabled="!!opening" @click="openDoc(d)">{{ d.file }}</button>
           </td>
-          <td>{{ d.synced ? `● 已同步 (wiki:${d.pageId})` : "○ 未上传" }}</td>
           <td>
             <button class="btn-sm" title="复制文件路径" @click="copyFile(d.file)">📋</button>
-            <!-- doc push 同 doc new 写死当前工作区 docdir：hub 根文档无上传语义 -->
-            <button v-if="!isHubData" class="btn-sm" :disabled="cmd.isRunning()" @click="push(d.file)">上传</button>
           </td>
         </tr>
       </tbody>
@@ -224,7 +195,6 @@ onMounted(refresh);
     <!-- 对齐 WorkspaceDetail：仅在无数据且无错误时才显示加载中/空态（err 时上方错误行已给出原因与重试） -->
     <p v-else-if="!err && !hub.error && loading" class="muted">加载中…</p>
     <p v-else-if="!err && !hub.error" class="muted">{{ isHubData ? "（暂无文档）" : "（暂无文档——在当前需求 gws doc new 创建）" }}</p>
-    <p class="muted">上传依赖 GWS_DOC_UPLOADER 指向的脚本（未配置时 gws 会提示）。doc push 的输出见命令弹窗。</p>
     <!-- 目标目录弹窗内选：默认外层当前筛选（根文档或需求），挂载不受数据归属限制 -->
     <AddDocDialog v-if="showNew" :default-dest="wsFilter" @close="onNewClose" />
   </div>
