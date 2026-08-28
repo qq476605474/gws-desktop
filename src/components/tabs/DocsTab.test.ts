@@ -136,6 +136,19 @@ function switchWs(name: string) {
   sel.dispatchEvent(new Event("change"));
 }
 
+/** 挂载并切到 checkout-revamp（默认根文档，doc new/push 等 ws 级操作需先切工作区）；
+ *  等目录行落到 ws docdir 才算切换完成（空列表也有目录行），并清零 runGws 计数 */
+async function mountWsTab(wsOut: string = docLsOut()) {
+  mocks.runGws.mockResolvedValueOnce({ code: 0, output: hubDocLsOut() }); // 挂载：根文档
+  mocks.runGws.mockResolvedValue({ code: 0, output: wsOut }); // 切工作区及之后的刷新
+  mountTab();
+  switchWs("checkout-revamp");
+  await vi.waitFor(() =>
+    expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp"),
+  );
+  mocks.runGws.mockClear();
+}
+
 /** 等待第 runId 次 exec 完成 listen 订阅后发出退出码（runId 从 1 递增） */
 async function exitWith(runId: number, code: number) {
   await vi.waitFor(() => expect(mocks.handlers.get(`gws-exit:${runId}`)).toBeTruthy());
@@ -162,52 +175,54 @@ afterEach(() => {
 });
 
 describe("DocsTab.refresh", () => {
-  it("默认选第一个工作区：doc ls 于 /hub/ws/<第一工作区>，docDir 剥 ANSI 解析、同步状态渲染", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
+  it("默认选根文档：doc ls 于 hub 根，docDir 剥 ANSI 解析、同步状态渲染", async () => {
+    mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
 
-    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
-    expect(el!.textContent).toContain("● 已同步 (wiki:123)");
+    expect(el!.textContent).toContain("● 已同步 (wiki:999)");
     expect(el!.textContent).toContain("○ 未上传");
-    // docDir 取自首行（剥 ANSI）：目录操作行显示 docs/<docdir>，无转义序列残留
-    expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp");
+    // hub 模式目录操作行落点为 docs/ 根（无 docdir 层），无转义序列残留
+    expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs");
     expect(el!.textContent).not.toContain("\u001b");
-    // select 纯列表：工作区名 + Hub 根文档，无「当前:」跟随首项（修复与列表项重复的 bug）
+    // 根文档置于选项首位（用户反馈 #12），工作区名随后；选中值落在根文档 option 上
     const optionTexts = Array.from(el!.querySelectorAll("option")).map((o) => o.textContent?.trim());
-    expect(optionTexts).toEqual(["checkout-revamp", "login-crash", "Hub 根文档"]);
-    // 默认选中（首个工作区）已写回 wsFilter，select 落在真实 option 上
-    expect(el!.querySelector<HTMLSelectElement>("select")!.value).toBe("checkout-revamp");
+    expect(optionTexts).toEqual(["根文档", "checkout-revamp", "login-crash"]);
+    expect(el!.querySelector<HTMLSelectElement>("select")!.value).toBe(HUB_ROOT);
   });
 
   it("wsFilter 切换：change 里 refresh 已读到新值（v-model 先生效），以新工作区为 cwd", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
+    mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
-    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
 
     switchWs("login-crash");
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/login-crash"));
   });
 
   it("doc ls 非零退出：错误尾行进错误行（含重试），docs 保留旧数据、错误文本不进表格", async () => {
-    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 挂载时首次 refresh 成功
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: hubDocLsOut() }); // 挂载时根文档成功
     mocks.runGws.mockResolvedValue({ code: 1, output: "gws: 工作区不存在\ngws: 请先 gws get 拉取" });
     mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    await vi.waitFor(() => expect(el!.textContent).toContain("README.md"));
 
     switchWs("login-crash"); // 触发第二次 refresh，doc ls 失败
     await vi.waitFor(() => expect(el!.textContent).toContain("gws: 请先 gws get 拉取"));
     expect(el!.textContent).toContain("重试");
     expect(el!.querySelectorAll("tbody tr").length).toBe(2); // docs 未被错误输出更新
-    expect(el!.textContent).toContain("技术方案.md"); // 仍是旧数据
+    expect(el!.textContent).toContain("README.md"); // 仍是旧数据
     expect(el!.textContent).not.toContain("工作区不存在"); // 错误只取尾行展示，首行不进任何位置
   });
 
   it("切换工作区失败：表格工作区列与行内 push cwd 均指向数据归属的旧工作区（docsWs 快照）", async () => {
-    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // checkout-revamp 成功
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: hubDocLsOut() }); // 挂载根文档成功
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 切 checkout-revamp 成功
     mocks.runGws.mockResolvedValue({ code: 1, output: "gws: 工作区不存在" });
     mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    await vi.waitFor(() => expect(el!.textContent).toContain("README.md"));
+    switchWs("checkout-revamp");
+    await vi.waitFor(() => expect(el!.textContent).toContain("技术方案.md"));
 
     switchWs("login-crash"); // doc ls 失败：docsWs/docs/docDir 不动
     await vi.waitFor(() => expect(el!.textContent).toContain("gws: 工作区不存在"));
@@ -220,16 +235,19 @@ describe("DocsTab.refresh", () => {
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "push", "技术方案.md"], "/hub/ws/checkout-revamp", 30000),
     );
     await exitWith(1, 0);
-    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(3)); // 挂载 + 切换 + 命令后刷新
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(4)); // 挂载 + 切换×2 + 命令后刷新
   });
 
   it("doc ls 以 exit 0 返回 hub 级假列表（首行 docs）：哨兵拦截，err 提示、docs 保留旧值", async () => {
-    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() });
-    // gws 上游怪癖（实证：.workspace.json 缺 docs 键等）：首行 basename 退化为 "docs"
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: hubDocLsOut() }); // 挂载根文档（hub 列表为正常态）
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 切 checkout-revamp 成功
+    // gws 上游怪癖（实证：.workspace.json 缺 docs 键等）：ws 模式下首行 basename 退化为 "docs"
     // + hub 级 README.md 行，exit 0——不设防会渲染成假表格
     mocks.runGws.mockResolvedValue({ code: 0, output: B + "docs" + N + "\n  " + G + "●" + N + " README.md  " + D + "wiki:999" + N });
     mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    await vi.waitFor(() => expect(el!.textContent).toContain("README.md"));
+    switchWs("checkout-revamp");
+    await vi.waitFor(() => expect(el!.textContent).toContain("技术方案.md"));
 
     switchWs("login-crash");
     await vi.waitFor(() => expect(el!.textContent).toContain("当前目录不是有效的需求"));
@@ -267,25 +285,33 @@ describe("DocsTab.refresh", () => {
     expect(el!.textContent).toContain("重试");
   });
 
-  it("无工作区 hub：ls 兜底后仍无目标，docs 安静置空不崩", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: D + "(暂无工作区，用 gws new 创建)" + N });
+  it("无工作区 hub：ls 兜底后无 ws 选项，仍以根文档为目标 doc ls 于 hub 根（不再空转）", async () => {
+    mocks.runGws.mockImplementation(async (args: string[]) =>
+      args[0] === "ls" ? { code: 0, output: D + "(暂无工作区，用 gws new 创建)" + N } : { code: 0, output: hubDocLsOut([]) },
+    );
     mountTab([]);
 
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
-    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档——在当前需求 gws doc new 创建）"));
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档）"));
     expect(el!.querySelector("table")).toBeNull();
     expect(el!.querySelector(".error")).toBeNull();
-    expect(mocks.runGws).toHaveBeenCalledTimes(1); // ls 兜底后无目标，不发 doc ls
+    // 选项只剩根文档，选中值仍落位
+    expect(Array.from(el!.querySelectorAll("option")).map((o) => o.textContent?.trim())).toEqual(["根文档"]);
+    expect(mocks.runGws).toHaveBeenCalledTimes(2); // ls 兜底 + doc ls（根文档恒为目标）
   });
 
-  it("ls 兜底非零退出：安静降级为无工作区空态（不报错、不发 doc ls）", async () => {
-    mocks.runGws.mockResolvedValue({ code: 1, output: "gws: hub 结构损坏" });
+  it("ls 兜底非零退出：安静降级为无工作区选项（不报错），根文档照常加载", async () => {
+    mocks.runGws.mockImplementation(async (args: string[]) =>
+      args[0] === "ls" ? { code: 1, output: "gws: hub 结构损坏" } : { code: 0, output: hubDocLsOut([]) },
+    );
     mountTab([]);
 
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["ls"], "/hub"));
-    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档——在当前需求 gws doc new 创建）"));
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
+    await vi.waitFor(() => expect(el!.textContent).toContain("（暂无文档）"));
     expect(el!.querySelector(".error")).toBeNull(); // 不额外报错
-    expect(mocks.runGws).toHaveBeenCalledTimes(1);
+    expect(Array.from(el!.querySelectorAll("option")).map((o) => o.textContent?.trim())).toEqual(["根文档"]);
   });
 
   it("首次加载在途显示「加载中…」而非「暂无文档」", async () => {
@@ -298,57 +324,55 @@ describe("DocsTab.refresh", () => {
     expect(el!.textContent).toContain("加载中…");
     expect(el!.querySelector("table")).toBeNull();
 
-    pending[0]!.resolve({ code: 0, output: docLsOut() });
+    pending[0]!.resolve({ code: 0, output: hubDocLsOut() });
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
     expect(el!.textContent).not.toContain("加载中…");
   });
 
-  it("hub.workspaces 为空：ls 兜底解析工作区后正常 doc ls 第一个", async () => {
+  it("hub.workspaces 为空：ls 兜底解析出选项列表，doc ls 仍默认根文档于 hub 根", async () => {
     const lsOut =
       "名称                   标题                           阶段     模块   分支\n" +
       "checkout-revamp        结算流程改版                   dev      3      " + D + "feature-20260818-checkout-revamp" + N + "\n";
     mocks.runGws.mockImplementation(async (args: string[]) =>
-      args[0] === "ls" ? { code: 0, output: lsOut } : { code: 0, output: docLsOut() },
+      args[0] === "ls" ? { code: 0, output: lsOut } : { code: 0, output: hubDocLsOut() },
     );
     mountTab([]);
 
-    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    // 兜底只补选项列表：根文档在前、工作区随后，选中值仍在根文档
+    expect(Array.from(el!.querySelectorAll("option")).map((o) => o.textContent?.trim())).toEqual(["根文档", "checkout-revamp"]);
+    expect(el!.querySelector<HTMLSelectElement>("select")!.value).toBe(HUB_ROOT);
   });
 
   it("并发守卫：切换工作区触发两次 refresh，旧响应迟到不覆盖最新结果", async () => {
     // 每次 runGws 调用挂起，由测试按序 resolve——模拟并发 refresh 的乱序返回
     const pending: Array<{ resolve: (v: RunResult) => void }> = [];
     mocks.runGws.mockImplementation(() => new Promise<RunResult>((resolve) => pending.push({ resolve })));
-    mountTab(); // refresh #1（挂载，checkout-revamp）在途
+    mountTab(); // refresh #1（挂载，根文档）在途
     switchWs("login-crash"); // refresh #2 在途
     expect(mocks.runGws).toHaveBeenCalledTimes(2);
 
     // 旧请求（#1）迟到的成功响应必须被丢弃（n !== seq）
-    pending[0]!.resolve({ code: 0, output: docLsOut([["技术方案.md", "123"]]) });
+    pending[0]!.resolve({ code: 0, output: hubDocLsOut([["README.md", "999"]]) });
     await nextTick();
     expect(el!.querySelector("table")).toBeNull();
-    expect(el!.textContent).not.toContain("技术方案.md");
+    expect(el!.textContent).not.toContain("README.md");
 
     // 最新请求（#2）的结果被采纳
     pending[1]!.resolve({ code: 0, output: docLsOut([["排期.md", null]]) });
     await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
     expect(el!.textContent).toContain("排期.md");
-    expect(el!.textContent).not.toContain("技术方案.md");
+    expect(el!.textContent).not.toContain("README.md");
   });
 });
 
-describe("DocsTab Hub 根文档源", () => {
-  it("切到「Hub 根文档」：doc ls 于 hub 根 cwd；首行 docs 为正常态，表格渲染 hub 列表且无上传按钮、新建禁用、commit 保留", async () => {
-    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 挂载默认首个工作区
+describe("DocsTab 根文档源（默认）", () => {
+  it("挂载即根文档：doc ls 于 hub 根 cwd；首行 docs 为正常态，表格渲染 hub 列表且无上传按钮、新建禁用、commit 保留", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
-
-    switchWs(HUB_ROOT);
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
-    // hub 列表两行（README.md/规范.md）；旧数据同为 2 行，须等 hub 特有文件出现才算切换完成
-    await vi.waitFor(() => expect(el!.textContent).toContain("README.md"));
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
     // hub 差异：目录操作行落点为 docs/ 根（无 docdir 层），精确断言 code 文本
     expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs");
     expect(el!.querySelector(".error")).toBeNull(); // 首行 "docs" 在 hub 模式不触发哨兵
@@ -367,26 +391,26 @@ describe("DocsTab Hub 根文档源", () => {
   });
 
   it("hub 模式 commit：doc commit 于 hub 根 cwd（hub 级文档仓库操作，不能拼 /ws/__hub__），结束后刷新", async () => {
-    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() });
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
-    switchWs(HUB_ROOT);
-    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
 
     clickButton("commit 全部文档");
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "commit"], "/hub", 30000));
     await exitWith(1, 0);
-    // 挂载 + 切 hub + 命令后刷新（刷新仍于 hub 根）
-    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(3));
+    // 挂载 + 命令后刷新（刷新仍于 hub 根）
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledTimes(2));
     expect(mocks.runGws).toHaveBeenLastCalledWith(["doc", "ls"], "/hub");
   });
 
-  it("hub 模式数据失败归属快照：切 hub 失败时旧 ws 表格保持自洽（工作区列仍是旧工作区、上传可用）", async () => {
-    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // checkout-revamp 成功
+  it("切回根文档失败：归属快照不动，旧 ws 表格保持自洽（目录行旧 docdir、上传仍可用）", async () => {
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: hubDocLsOut() }); // 挂载根文档成功
+    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 切 checkout-revamp 成功
     mocks.runGws.mockResolvedValue({ code: 1, output: "gws: hub 文档仓库不存在" });
     mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    await vi.waitFor(() => expect(el!.textContent).toContain("README.md"));
+    switchWs("checkout-revamp");
+    await vi.waitFor(() => expect(el!.textContent).toContain("技术方案.md"));
 
     switchWs(HUB_ROOT); // doc ls 失败：docsWs/docs/docDir 不动
     await vi.waitFor(() => expect(el!.textContent).toContain("gws: hub 文档仓库不存在"));
@@ -398,9 +422,7 @@ describe("DocsTab Hub 根文档源", () => {
 
 describe("DocsTab 打开文档（系统默认应用）", () => {
   it("ws 模式点击文件名：openPath 于 docs/<docdir>/<file>（与文件复制路径一致），不再读内容弹查看器", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    await mountWsTab();
 
     // title 交代新交互语义：交给系统默认应用（如 Typora/VS Code）
     expect(fileButton("技术方案.md").title).toBe("用系统默认应用打开");
@@ -414,11 +436,8 @@ describe("DocsTab 打开文档（系统默认应用）", () => {
   });
 
   it("hub 模式点击文件名：openPath 于 docs/<file>（无 docdir 层）", async () => {
-    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() });
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut([["README.md", "999"]]) });
     mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
-    switchWs(HUB_ROOT);
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(1));
 
     fileButton("README.md").click();
@@ -427,45 +446,40 @@ describe("DocsTab 打开文档（系统默认应用）", () => {
   });
 
   it("打开失败：openPath reject → err = String(e) 进错误行（含重试），不崩", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mocks.openPath.mockRejectedValueOnce("打开文件失败 /hub/docs/2026-08-18-checkout-revamp/技术方案.md: no such file");
+    mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut([["README.md", "999"]]) });
+    mocks.openPath.mockRejectedValueOnce("打开文件失败 /hub/docs/README.md: no such file");
     mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(1));
 
-    fileButton("技术方案.md").click();
-    await vi.waitFor(() =>
-      expect(el!.textContent).toContain("打开文件失败 /hub/docs/2026-08-18-checkout-revamp/技术方案.md: no such file"),
-    );
+    fileButton("README.md").click();
+    await vi.waitFor(() => expect(el!.textContent).toContain("打开文件失败 /hub/docs/README.md: no such file"));
     expect(el!.querySelector(".error")).toBeTruthy();
   });
 
   it("打开在途：全部行文件按钮禁用，patch 滞后窗口内的第二击被 opening 守卫拦截；完成后恢复可点", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
+    mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     let release!: () => void;
     mocks.openPath.mockImplementation(() => new Promise<void>((r) => (release = r)));
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
 
-    fileButton("技术方案.md").click();
-    fileButton("技术方案.md").click(); // Vue 未及重渲染禁用按钮，第二击靠 opening 守卫拦截
+    fileButton("README.md").click();
+    fileButton("README.md").click(); // Vue 未及重渲染禁用按钮，第二击靠 opening 守卫拦截
     await new Promise((r) => setTimeout(r, 0));
     expect(mocks.openPath).toHaveBeenCalledTimes(1);
     await nextTick();
-    expect(fileButton("技术方案.md").disabled).toBe(true);
-    expect(fileButton("排期.md").disabled).toBe(true); // 在途打开禁全部行（系统调起无上界，跨行也禁）
+    expect(fileButton("README.md").disabled).toBe(true);
+    expect(fileButton("规范.md").disabled).toBe(true); // 在途打开禁全部行（系统调起无上界，跨行也禁）
 
     release();
-    await vi.waitFor(() => expect(fileButton("技术方案.md").disabled).toBe(false)); // 打开完成恢复可点
-    expect(fileButton("排期.md").disabled).toBe(false);
+    await vi.waitFor(() => expect(fileButton("README.md").disabled).toBe(false)); // 打开完成恢复可点
+    expect(fileButton("规范.md").disabled).toBe(false);
   });
 });
 
 describe("DocsTab 命令操作", () => {
   it("create：doc new 于当前工作区，成功后清输入；exit 前 refresh 未发起（锁 waitDone→refresh 时序）", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
 
     setInput("技术方案v2.md");
     await nextTick();
@@ -483,10 +497,7 @@ describe("DocsTab 命令操作", () => {
   });
 
   it("create：非零退出不清输入（前后空白以 trim 值传参），仍刷新", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
 
     setInput("  排期v2.md  ");
     await nextTick();
@@ -501,10 +512,7 @@ describe("DocsTab 命令操作", () => {
   });
 
   it("create：exec reject（IPC 失败）不崩，仍刷新，输入保留", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
     mocks.runGwsStream.mockRejectedValueOnce(new Error("invoke 失败"));
 
     setInput("技术方案v2.md");
@@ -516,10 +524,7 @@ describe("DocsTab 命令操作", () => {
   });
 
   it("create：文件名含内嵌空格直接拒绝——err 提示、不 exec、输入保留", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
 
     setInput("my plan.md");
     await nextTick();
@@ -532,10 +537,7 @@ describe("DocsTab 命令操作", () => {
   });
 
   it("create：双击守卫——首击在途（submitting）时同步第二击不重复 exec", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
 
     setInput("技术方案v2.md");
     await nextTick();
@@ -548,10 +550,7 @@ describe("DocsTab 命令操作", () => {
   });
 
   it("push：confirm 确认后才 exec——doc push <file> 于当前工作区，结束后刷新", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
 
     // confirm 挂起：写远程操作未获确认前不得 exec
     let resolveConfirm!: (v: boolean) => void;
@@ -571,10 +570,7 @@ describe("DocsTab 命令操作", () => {
   });
 
   it("push：confirm 取消不发命令、不刷新", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
     mocks.confirm.mockResolvedValueOnce(false);
 
     clickButton("上传"); // 首行 技术方案.md
@@ -585,10 +581,7 @@ describe("DocsTab 命令操作", () => {
   });
 
   it("commit：工具栏「commit 全部文档」无文件参数，于数据归属工作区执行，结束后刷新", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
 
     clickButton("commit 全部文档");
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "commit"], "/hub/ws/checkout-revamp", 30000));
@@ -599,10 +592,7 @@ describe("DocsTab 命令操作", () => {
   });
 
   it("push/commit：已有命令在跑（isRunning）时入口直接返回，不 exec 不刷新", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelector("table")).toBeTruthy());
-    mocks.runGws.mockClear();
+    await mountWsTab();
 
     clickButton("上传"); // 启动 doc push（current.state=running）
     await vi.waitFor(() => expect(mocks.handlers.get("gws-exit:1")).toBeTruthy());
@@ -627,9 +617,7 @@ describe("DocsTab 目录行与文件复制", () => {
   }
 
   it("目录操作行：ws 模式显示 docs/<docdir>，PathActions 的 path 为目录全路径", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    await mountWsTab();
 
     expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp");
     dirButton("复制路径").click();
@@ -639,16 +627,11 @@ describe("DocsTab 目录行与文件复制", () => {
   });
 
   it("目录操作行：hub 模式 code 为 docs，path 为 <hub>/docs；文件复制按钮走 docs/ 第一层", async () => {
-    mocks.runGws.mockResolvedValueOnce({ code: 0, output: docLsOut() }); // 挂载默认首个工作区
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
     await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
-    switchWs(HUB_ROOT);
-    // 旧 ws 数据同为 2 行：等目录行切到 docs/ 根才算 hub 数据已渲染
-    await vi.waitFor(() =>
-      expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs"),
-    );
 
+    expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs");
     dirButton("复制路径").click();
     await vi.waitFor(() => expect(mocks.copyText).toHaveBeenCalledWith("/hub/docs"));
 
@@ -660,9 +643,7 @@ describe("DocsTab 目录行与文件复制", () => {
   });
 
   it("文件行复制按钮：copyText 带文件全路径（ws 模式含 docdir 层）", async () => {
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut() });
-    mountTab();
-    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    await mountWsTab();
 
     el!.querySelectorAll<HTMLTableRowElement>("tbody tr")[0]!
       .querySelector<HTMLButtonElement>('button[title="复制文件路径"]')!
@@ -674,10 +655,8 @@ describe("DocsTab 目录行与文件复制", () => {
 
   it("空文档列表：docDir 仍保留（目录本身存在），目录操作行照常显示", async () => {
     // doc ls 只输出首行 docdir、无文件行：目录行仍可定位，空态文案照常
-    mocks.runGws.mockResolvedValue({ code: 0, output: docLsOut([]) });
-    mountTab();
+    await mountWsTab(docLsOut([]));
 
-    await vi.waitFor(() => expect(el!.querySelector(".group-row")).toBeTruthy());
     expect(el!.querySelector(".group-row")!.querySelector("code")!.textContent).toBe("docs/2026-08-18-checkout-revamp");
     expect(el!.textContent).toContain("（暂无文档——在当前需求 gws doc new 创建）");
     expect(el!.querySelector("table")).toBeNull();

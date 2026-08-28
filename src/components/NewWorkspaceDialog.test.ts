@@ -65,7 +65,7 @@ function mountDialog() {
   app.mount(el);
 }
 
-/** 第 idx 个文本输入框（0=名称，序：名称/标题/自定义分支/基线来源；名称随 customBranch 隐藏会漂移） */
+/** 第 idx 个文本输入框（0=名称，序固定：名称/标题/自定义分支/基线来源——名称恒渲染不漂移） */
 function setInput(idx: number, value: string) {
   const input = el!.querySelectorAll<HTMLInputElement>("input")[idx]!;
   input.value = value;
@@ -84,7 +84,7 @@ async function checkModule(name: string) {
   await nextTick();
 }
 
-/** 基线来源输入框填值（按 placeholder 定位：名称输入框随 customBranch 隐藏后索引会漂移） */
+/** 基线来源输入框填值（按 placeholder 定位，与序号解耦） */
 function setFrom(value: string) {
   const input = Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
     .find((i) => i.placeholder.includes("留空=主干"))!;
@@ -125,11 +125,11 @@ afterEach(() => {
 });
 
 describe("NewWorkspaceDialog", () => {
-  it("名称 placeholder 写明 gws new 的实际规则：必填、无留空反推", () => {
+  it("名称 placeholder 写明目录名可中文、留空时从分支名反推（gws new 名称与 --branch 独立）", () => {
     mountDialog();
     const placeholder = el!.querySelectorAll<HTMLInputElement>("input")[0]!.placeholder;
-    expect(placeholder).toContain("必填");
-    expect(placeholder).toContain("前缀-日期-名称");
+    expect(placeholder).toContain("可中文");
+    expect(placeholder).toContain("反推");
   });
 
   it("创建按钮在名称为空或未勾选模块时禁用（名称与模块均必填，模块不再有「不选=全部仓库」语义）", async () => {
@@ -204,8 +204,8 @@ describe("NewWorkspaceDialog", () => {
     mountDialog();
     setInput(0, "demo");
     setInput(1, "结算改版"); // 标题
-    // 自定义分支名命中 <前缀>-日期-<名称> 模式（文本输入序：名称/标题/自定义分支），
-    // 名称随分支名反推为 demo（与手填一致）
+    // 自定义分支独立传入（文本输入序固定：名称/标题/自定义分支）：
+    // 名称手填优先，目录名用 demo，不因分支名覆盖
     setInput(2, "feature-20260827-demo");
     await checkModule("order-service");
     await checkModule("user-web"); // join 顺序即勾选顺序
@@ -293,8 +293,8 @@ describe("NewWorkspaceDialog 基线来源（--from）", () => {
   });
 });
 
-describe("NewWorkspaceDialog 自定义分支名反推名称（用户反馈 #5）", () => {
-  /** 填自定义分支名（按 placeholder 定位：名称输入框随 customBranch 隐藏后索引会漂移） */
+describe("NewWorkspaceDialog 目录名与分支名独立（用户反馈 #5/#11）", () => {
+  /** 填自定义分支名（按 placeholder 定位，与序号解耦） */
   function setCustomBranch(value: string) {
     const input = Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
       .find((i) => i.placeholder.includes("留空则用前缀"))!;
@@ -302,19 +302,36 @@ describe("NewWorkspaceDialog 自定义分支名反推名称（用户反馈 #5）
     input.dispatchEvent(new Event("input"));
   }
 
-  /** 名称输入框是否渲染（以 placeholder 识别，避免与标题/分支输入框混淆） */
+  /** 名称输入框（以 placeholder 识别，避免与标题/分支输入框混淆；恒渲染） */
   function nameInput(): HTMLInputElement | null {
     return Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
-      .find((i) => i.placeholder.includes("必填")) ?? null;
+      .find((i) => i.placeholder.includes("目录名")) ?? null;
   }
 
-  it("customBranch 命中 <前缀>-YYYYMMDD-<名称>：名称输入框隐藏、说明行实时显示反推结果、提交首参为反推值", async () => {
+  it("中文目录名 + 英文分支名并存：名称手填优先，--branch 独立传入（用户反馈 #11 核心）", async () => {
+    mountDialog();
+    setInput(0, "收银台改版");
+    setCustomBranch("feature-20260827-checkout");
+    await nextTick();
+    expect(nameInput()).toBeTruthy(); // 两个输入框同时存在
+    await checkModule("order-service");
+    await clickCreate();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "收银台改版", "--modules", "order-service", "--branch", "feature-20260827-checkout"],
+        "/hub",
+        30000,
+      ),
+    );
+  });
+
+  it("名称留空 + customBranch 命中 <前缀>-YYYYMMDD-<名称>：说明行显示反推结果、提交首参为反推值", async () => {
     mountDialog();
     setCustomBranch("feature-20260827-abc");
     await nextTick();
-    expect(nameInput()).toBeNull(); // 名称输入框被 v-if 卸载
-    expect(el!.textContent).toContain("名称将从分支名反推：abc");
-    // 名称未手填也可创建（分支名已含名称信息，按钮不再依赖名称输入；模块仍须勾选）
+    expect(nameInput()).toBeTruthy(); // 名称输入框恒渲染（不再因分支隐藏）
+    expect(el!.textContent).toContain("名称未填：目录名将从分支名反推为 abc");
+    // 名称未手填也可创建（分支名已含名称信息，按钮不依赖名称输入；模块仍须勾选）
     await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() =>
@@ -326,12 +343,11 @@ describe("NewWorkspaceDialog 自定义分支名反推名称（用户反馈 #5）
     );
   });
 
-  it("customBranch 不匹配反推模式：名称退回完整分支名", async () => {
+  it("名称留空 + customBranch 不匹配反推模式：目录名退回完整分支名", async () => {
     mountDialog();
     setCustomBranch("mybranch");
     await nextTick();
-    expect(nameInput()).toBeNull();
-    expect(el!.textContent).toContain("名称将从分支名反推：mybranch");
+    expect(el!.textContent).toContain("名称未填：目录名将从分支名反推为 mybranch");
     await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() =>
@@ -343,20 +359,27 @@ describe("NewWorkspaceDialog 自定义分支名反推名称（用户反馈 #5）
     );
   });
 
-  it("customBranch 清空：名称输入框恢复渲染、提交用手填值（原行为不变）", async () => {
+  it("customBranch 清空：反推说明行消失、提交用手填值（原行为不变）", async () => {
     mountDialog();
     setCustomBranch("feature-20260827-abc");
     await nextTick();
-    expect(el!.textContent).toContain("名称将从分支名反推：abc");
+    expect(el!.textContent).toContain("名称未填：目录名将从分支名反推为 abc");
     setCustomBranch("");
     await nextTick();
-    expect(nameInput()).toBeTruthy();
-    expect(el!.textContent).not.toContain("名称将从分支名反推");
+    expect(el!.textContent).not.toContain("名称未填");
     setInput(0, "demo");
     await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--modules", "order-service"], "/hub", 30000),
     );
+  });
+
+  it("名称手填后反推说明行不显示（手填优先，无需提示反推值）", async () => {
+    mountDialog();
+    setInput(0, "收银台改版");
+    setCustomBranch("feature-20260827-checkout");
+    await nextTick();
+    expect(el!.textContent).not.toContain("名称未填");
   });
 });

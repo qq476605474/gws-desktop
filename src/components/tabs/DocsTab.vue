@@ -17,7 +17,7 @@ import PathActions from "../PathActions.vue";
 
 const hub = useHubStore();
 const cmd = useCmdStore();
-const wsFilter = ref("");
+const wsFilter = ref(HUB_ROOT); // 默认根文档（用户反馈 #12）；选中值随数据归属写回
 const docs = ref<DocEntry[]>([]);
 const docsWs = ref(""); // 数据归属快照：doc ls 成功时随 docs/docDir 一起更新，
 // 失败时不动——行内命令 cwd 与目录行/文件路径均以它为准，保持自洽。
@@ -55,17 +55,16 @@ async function refresh() {
       if (n !== seq) return; // 旧请求迟到：丢弃
       // 兜底失败（含 spawn 失败）安静降级为"无工作区"空态，不额外报错——
       // doc ls 主流程的 err 机制已够
-      wss = ls.code === null || ls.code !== 0 ? [] : parseLs(ls.output);
+      if (ls.code === 0) {
+        wss = parseLs(ls.output);
+        // 写回 store：select 选项渲染 hub.workspaces，兜底解析的工作区也须可选
+        hub.workspaces = wss;
+      }
     }
-    // 默认选中（首个工作区）写回 wsFilter：select 已无「当前」跟随首项，
-    // 选中值必须落成真实 option——否则首项与列表项重复显示同一工作区
-    const target = wsFilter.value || wss[0]?.name;
-    if (!target) {
-      docs.value = [];
-      docDir.value = "";
-      docsWs.value = "";
-      return;
-    }
+    // 根文档为默认与兜底：选中值恒有效（HUB_ROOT 永远可选）；仅当存量选中值
+    // 不在最新工作区列表（如他处已删除）时回落到根文档
+    let target = wsFilter.value;
+    if (target !== HUB_ROOT && !wss.some((w) => w.name === target)) target = HUB_ROOT;
     wsFilter.value = target;
     // hub 模式在 hub 根跑 doc ls：gws 无工作区上下文时退化为列 docs/ 第一层（hub 级文档）
     const cwd = target === HUB_ROOT ? hub.path : `${hub.path}/ws/${target}`;
@@ -204,9 +203,10 @@ onMounted(refresh);
   <div>
     <div class="toolbar">
       <select v-model="wsFilter" @change="refresh">
-        <!-- 过滤同名工作区：万一真有叫 __hub__ 的工作区，哨兵会静默错位到 hub 根 -->
+        <!-- 根文档置于首位且默认选中（用户反馈 #12）；过滤同名工作区：
+             万一真有叫 __hub__ 的工作区，哨兵会静默错位到 hub 根 -->
+        <option :value="HUB_ROOT">根文档</option>
         <option v-for="w in hub.workspaces.filter((w) => w.name !== HUB_ROOT)" :key="w.name" :value="w.name">{{ w.name }}</option>
-        <option :value="HUB_ROOT">Hub 根文档</option>
       </select>
       <!-- doc new 写死当前工作区 docdir：hub 根文档不可新建，输入与按钮随归属禁用 -->
       <input v-model="newFile" autocapitalize="off" spellcheck="false" placeholder="新文档名.md" :disabled="isHubData || cmd.isRunning()" />
@@ -246,6 +246,10 @@ onMounted(refresh);
 
 <style scoped>
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+/* 需求筛选 select 与相邻输入框等高、宽度各安其位（用户反馈 #12）：全局
+   width:100%/max-width:320px 在 flex 行里宽度漂移，显式 flex-basis 接管 */
+.toolbar select { flex: 0 0 220px; height: var(--control-h); }
+.toolbar input { flex: 1 1 240px; min-width: 180px; height: var(--control-h); }
 .group-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 /* table/th/td 基础样式全局化（base.css） */
 .muted { color: var(--fg-muted); font-size: 12px; }
