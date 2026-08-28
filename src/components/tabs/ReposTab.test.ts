@@ -46,8 +46,13 @@ vi.mock("@tauri-apps/api/event", () => ({
   }),
 }));
 
+// confirmBox（自绘中文确认框）mock：与原 plugin-dialog confirm 同签名，测试体无感
+vi.mock("../../lib/confirm", () => ({
+  confirmBox: mocks.confirm,
+}));
+
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  confirm: mocks.confirm,
+  confirm: vi.fn(),
 }));
 
 vi.mock("@tauri-apps/plugin-store", () => ({

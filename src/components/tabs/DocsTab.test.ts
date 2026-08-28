@@ -48,7 +48,12 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  confirm: mocks.confirm,
+  confirm: vi.fn(),
+}));
+
+// confirmBox（自绘中文确认框）mock：与原 plugin-dialog confirm 同签名，测试体无感
+vi.mock("../../lib/confirm", () => ({
+  confirmBox: mocks.confirm,
 }));
 
 vi.mock("@tauri-apps/plugin-store", () => ({
@@ -109,8 +114,14 @@ function setInput(value: string) {
   input.dispatchEvent(new Event("input"));
 }
 
-function inputValue(): string {
-  return el!.querySelector<HTMLInputElement>("input")!.value;
+/** 打开新建文档弹窗（工具栏按钮 → AddDocDialog 挂载，v-if 渲染须等 nextTick）并填入文档名 */
+async function openNewDialog(name: string) {
+  clickButton("+ 新建文档");
+  await nextTick();
+  const input = el!.querySelector<HTMLInputElement>(".dialog input");
+  if (!input) throw new Error("新建文档弹窗输入框未找到");
+  input.value = name;
+  input.dispatchEvent(new Event("input"));
 }
 
 function clickButton(text: string) {
@@ -379,8 +390,7 @@ describe("DocsTab 根文档源（默认）", () => {
     // 操作列保留（📋 复制文件路径）但无上传按钮：doc push 写死工作区 docdir，hub 根文档无上传语义
     expect(el!.querySelector("thead")!.textContent).toContain("操作");
     expect(Array.from(el!.querySelectorAll("button")).filter((b) => b.textContent?.trim() === "上传")).toHaveLength(0);
-    // doc new 是 ws 级：输入框与新建按钮禁用
-    expect(el!.querySelector<HTMLInputElement>("input")!.disabled).toBe(true);
+    // doc new 是 ws 级：新建按钮随 hub 归属禁用（输入框已挪入弹窗）
     const newBtn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "+ 新建文档")!;
     expect(newBtn.disabled).toBe(true);
@@ -478,12 +488,12 @@ describe("DocsTab 打开文档（系统默认应用）", () => {
 });
 
 describe("DocsTab 命令操作", () => {
-  it("create：doc new 于当前工作区，成功后清输入；exit 前 refresh 未发起（锁 waitDone→refresh 时序）", async () => {
+  it("create：弹窗内 doc new 于当前工作区；exit 前 refresh 未发起（锁 waitDone→关窗→refresh 时序），成功后关窗", async () => {
     await mountWsTab();
 
-    setInput("技术方案v2.md");
+    await openNewDialog("技术方案v2.md");
     await nextTick();
-    clickButton("+ 新建文档");
+    clickButton("创建");
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "new", "技术方案v2.md"], "/hub/ws/checkout-revamp", 30000),
     );
@@ -491,58 +501,65 @@ describe("DocsTab 命令操作", () => {
     expect(mocks.runGws).not.toHaveBeenCalled();
 
     await exitWith(1, 0);
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull()); // 成功关窗
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
-    await nextTick();
-    expect(inputValue()).toBe("");
   });
 
-  it("create：非零退出不清输入（前后空白以 trim 值传参），仍刷新", async () => {
+  it("create：非零退出不关窗、输入保留（前后空白以 trim 值传参）；取消后刷新", async () => {
     await mountWsTab();
 
-    setInput("  排期v2.md  ");
+    await openNewDialog("  排期v2.md  ");
     await nextTick();
-    clickButton("+ 新建文档");
+    clickButton("创建");
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "new", "排期v2.md"], "/hub/ws/checkout-revamp", 30000),
     );
     await exitWith(1, 1); // doc new 失败
+    await new Promise((r) => setTimeout(r, 0)); // 等 waitDone 链路收尾
+    expect(el!.querySelector(".dialog")).toBeTruthy(); // 不关窗
+    expect(el!.querySelector<HTMLInputElement>(".dialog input")!.value).toBe("  排期v2.md  "); // 失败保留输入便于重试
+    clickButton("取消");
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
-    await nextTick();
-    expect(inputValue()).toBe("  排期v2.md  "); // 失败保留原始输入便于重试
   });
 
-  it("create：exec reject（IPC 失败）不崩，仍刷新，输入保留", async () => {
+  it("create：exec reject（IPC 失败）弹窗内联报错不关窗；取消后刷新", async () => {
     await mountWsTab();
     mocks.runGwsStream.mockRejectedValueOnce(new Error("invoke 失败"));
 
-    setInput("技术方案v2.md");
+    await openNewDialog("技术方案v2.md");
     await nextTick();
-    clickButton("+ 新建文档");
+    clickButton("创建");
+    await vi.waitFor(() => expect(el!.textContent).toContain("invoke 失败"));
+    expect(el!.querySelector(".dialog")).toBeTruthy(); // 不关窗
+    expect(el!.querySelector<HTMLInputElement>(".dialog input")!.value).toBe("技术方案v2.md"); // 输入保留
+    clickButton("取消");
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
-    await nextTick();
-    expect(inputValue()).toBe("技术方案v2.md");
   });
 
-  it("create：文件名含内嵌空格直接拒绝——err 提示、不 exec、输入保留", async () => {
+  it("create：文件名含内嵌空格直接拒绝——弹窗内 err 提示、不 exec；取消不刷新（无终态命令）", async () => {
     await mountWsTab();
 
-    setInput("my plan.md");
+    await openNewDialog("my plan.md");
     await nextTick();
-    clickButton("+ 新建文档");
+    clickButton("创建");
     await new Promise((r) => setTimeout(r, 0));
     expect(el!.textContent).toContain("文档名不能包含空格");
     expect(mocks.runGwsStream).not.toHaveBeenCalled(); // 不发命令
-    expect(mocks.runGws).not.toHaveBeenCalled(); // 也不触发刷新
-    expect(inputValue()).toBe("my plan.md"); // 输入保留便于改名重试
+    expect(el!.querySelector(".dialog")).toBeTruthy(); // 不关窗
+
+    clickButton("取消");
+    await new Promise((r) => setTimeout(r, 0));
+    // 关窗即刷新（统一路径）：列表重拉但无命令终态副作用
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub/ws/checkout-revamp"));
   });
 
   it("create：双击守卫——首击在途（submitting）时同步第二击不重复 exec", async () => {
     await mountWsTab();
 
-    setInput("技术方案v2.md");
+    await openNewDialog("技术方案v2.md");
     await nextTick();
-    clickButton("+ 新建文档");
-    clickButton("+ 新建文档"); // Vue 未及重渲染禁用按钮，第二击只能靠 submitting 守卫拦截
+    clickButton("创建");
+    clickButton("创建"); // Vue 未及重渲染禁用按钮，第二击只能靠 submitting 守卫拦截
     await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledTimes(1));
 
     await exitWith(1, 0);

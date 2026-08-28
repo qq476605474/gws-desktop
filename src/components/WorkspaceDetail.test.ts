@@ -36,6 +36,12 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   confirm: vi.fn(),
 }));
 
+// confirmBox（自绘中文确认框）mock：测试体经 dynamic import 取 confirmBox，
+// 与原 plugin-dialog confirm 同签名
+vi.mock("../lib/confirm", () => ({
+  confirmBox: vi.fn(),
+}));
+
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: vi.fn(),
 }));
@@ -180,7 +186,7 @@ describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
   });
 
   it("gws drop 先原生 confirm，确认后单独传 confirmTimeoutMs=1500（GUI 下唯一真读 stdin 的命令）", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(true);
     await mountReady();
     clickText("移除");
@@ -193,7 +199,7 @@ describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
   });
 
   it("removeWs 走 execDialog：gws rm 于 hub.path、默认 30000", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(true);
     await mountReady();
     clickText("删除需求");
@@ -205,7 +211,7 @@ describe("WorkspaceDetail 命令操作（弹窗式 execDialog）", () => {
 
 describe("WorkspaceDetail 写操作前确认（Pull/Push/Merge 系列统一 confirmThenDo）", () => {
   it("Push：confirm 取消 → 不执行命令；Pull 同为写操作（更新本地），取消同样不执行、确认后执行", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(false);
     await mountReady();
     clickText("Push");
@@ -230,7 +236,7 @@ describe("WorkspaceDetail 写操作前确认（Pull/Push/Merge 系列统一 conf
   });
 
   it("Pull --rebase 亦经 confirm：取消不执行；确认后 pull --rebase（默认 30000）", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(false);
     await mountReady();
     clickText("Pull --rebase");
@@ -248,7 +254,7 @@ describe("WorkspaceDetail 写操作前确认（Pull/Push/Merge 系列统一 conf
   });
 
   it("Push：confirm 确认 → 执行 gws push（默认 30000）", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(true);
     await mountReady();
     clickText("Push");
@@ -258,7 +264,7 @@ describe("WorkspaceDetail 写操作前确认（Pull/Push/Merge 系列统一 conf
   });
 
   it("重入守卫：confirm pending 期间再点 Push 不发起第二次 confirm（防双击排队两次确认）", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     // 第一次 confirm 挂起，模拟原生对话框等待用户点击的 IPC 间隙
     let resolveFirst: (v: boolean) => void = () => {};
     vi.mocked(confirm).mockImplementationOnce(
@@ -291,7 +297,7 @@ describe("WorkspaceDetail 写操作前确认（Pull/Push/Merge 系列统一 conf
   }
 
   it("Merge+Push：弹窗实时取 env ls 选环境（未选禁提交），confirm 取消 → 不执行；确认 → merge <env> --push", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(false);
     await mountReady();
     // 环境列表取自弹窗打开时的 env ls 实时结果（hub.envs 快照不再使用）
@@ -325,7 +331,7 @@ describe("WorkspaceDetail 写操作前确认（Pull/Push/Merge 系列统一 conf
   });
 
   it("Merge（本地）：弹窗选环境 → confirm → 执行 merge <env>（不推送）", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(true);
     await mountReady();
     mocks.runGws.mockImplementation(async (args: string[]) =>
@@ -370,7 +376,7 @@ describe("WorkspaceDetail 同步最新代码（sync-main，--from 可选）", ()
   }
 
   it("输入 from → 开始同步 → confirm 确认：执行 sync-main --yes --from <ref>，弹窗即关", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(true);
     await openSyncMain();
     await setFrom("release-2.0");
@@ -389,7 +395,7 @@ describe("WorkspaceDetail 同步最新代码（sync-main，--from 可选）", ()
   });
 
   it("留空 from → 开始同步：args 无 --from（走创建时基线）", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(true);
     await openSyncMain();
     clickText("开始同步");
@@ -400,7 +406,7 @@ describe("WorkspaceDetail 同步最新代码（sync-main，--from 可选）", ()
   });
 
   it("confirm 取消 → 不执行命令（sync-main 合并属变更操作，须确认）", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(false);
     await openSyncMain();
     await setFrom("release-2.0");
@@ -423,7 +429,7 @@ describe("WorkspaceDetail 头部刷新按钮", () => {
   });
 
   it("命令运行中刷新按钮禁用（本文件 listen mock 为 no-op，无法模拟 exit，恢复半程不在此验证）", async () => {
-    const { confirm } = await import("@tauri-apps/plugin-dialog");
+    const { confirmBox: confirm } = await import("../lib/confirm");
     vi.mocked(confirm).mockResolvedValue(true); // Pull 已改走 confirmThenDo：先过原生确认才 exec
     await mountReady();
     clickText("Pull");

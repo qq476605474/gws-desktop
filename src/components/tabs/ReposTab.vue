@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirmBox } from "../../lib/confirm";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
 import PathActions from "../PathActions.vue";
@@ -36,7 +36,7 @@ async function rm(name: string) {
   // macOS WKWebView 下原生 confirm 恒返回 false，须用插件原生对话框；异常按取消处理
   let ok = false;
   try {
-    ok = await confirm(`移除仓库 ${name}？`);
+    ok = await confirmBox(`移除仓库 ${name}？`);
   } catch {
     return;
   }

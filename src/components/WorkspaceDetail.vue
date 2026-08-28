@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirmBox } from "../lib/confirm";
 import { useHubStore } from "../stores/hub";
 import { useCmdStore, type ExecOpts } from "../stores/cmd";
 import { runGws } from "../lib/gws-bridge";
@@ -67,7 +67,7 @@ async function confirmThenDo(label: string, args: string[], question: string, op
   try {
     let ok = false;
     try {
-      ok = await confirm(question);
+      ok = await confirmBox(question);
     } catch {
       return; // 理论上不 reject；万一异常按取消处理
     }
@@ -106,7 +106,7 @@ async function removeWs() {
   // macOS WKWebView 下原生 window.confirm 恒返回 false，须用插件的原生对话框
   let ok = false;
   try {
-    ok = await confirm(`确认删除需求 ${props.name}？文档自动归档，未推送代码分支保留。`);
+    ok = await confirmBox(`确认删除需求 ${props.name}？文档自动归档，未推送代码分支保留。`);
   } catch {
     return; // 理论上不 reject；万一异常按取消处理，避免组件崩
   }

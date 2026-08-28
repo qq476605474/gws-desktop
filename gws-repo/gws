@@ -1352,10 +1352,11 @@ cmd_env() {
       prune_all_repos
       local fail=()
       for e in "$@"; do
-        # macOS 大小写不敏感文件系统：目录名 Ghost 与 git refs 磁盘小写 ghost 对不上，环境永久锁死
-        case "$e" in
-          *[A-Z]*) die "环境名不允许大写字母: $e  ${D}(macOS 大小写不敏感文件系统下目录名与 git 分支名会对不上而锁死)${N}";;
-        esac
+        # 环境分支名按 git 规则校验（check-ref-format --branch）：大小写/中文均可，
+        # 仅拒绝 git 本身不接受的形态（..、@{、尾空格/斜杠、control 字符等）
+        if ! git check-ref-format --branch "$e" >/dev/null 2>&1; then
+          fail+=("$e: 不是合法的 git 分支名"); continue
+        fi
         [ -d "$ENVS/$e" ] && { warn "$e: 已存在"; continue; }
         # 至少要有一个仓库存在该远程分支，否则多半是敲错了
         local found=0

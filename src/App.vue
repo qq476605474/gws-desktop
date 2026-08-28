@@ -1,15 +1,21 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { currentView } from "./router";
 import { useSettingsStore } from "./stores/settings";
+import { useHubStore } from "./stores/hub";
 import { busyCount } from "./lib/busy";
 import StartupView from "./views/StartupView.vue";
 import MainView from "./views/MainView.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
+import ConfirmBox from "./components/ConfirmBox.vue";
 import CmdDialog from "./components/CmdDialog.vue";
 import ToastList from "./components/ToastList.vue";
 
 const settings = useSettingsStore();
+const hub = useHubStore();
+// 切换 hub（SwitchHubDialog）时 MainView 整体重挂载：各 Tab 的 onMounted 取数重跑，
+// 旧 hub 的列表/详情/展开状态随之丢弃——与「回 startup 重进」等价但无闪屏
+const mainKey = computed(() => hub.path);
 // WHY ready 门控：子组件 onMounted 先于父组件的异步 init 完成，直接渲染会让 StartupView 读到空 lastHub，上次 hub 自动进入失效
 const ready = ref(false);
 onMounted(async () => {
@@ -21,12 +27,13 @@ onMounted(async () => {
 <template>
   <template v-if="ready">
     <StartupView v-if="currentView === 'startup'" />
-    <MainView v-else />
+    <MainView v-else :key="mainKey" />
   </template>
-  <!-- z-index 层级：busy 遮罩 90 < 表单弹窗 100 < CmdDialog 150 < ConfirmDialog 200 -->
+  <!-- z-index 层级：busy 遮罩 90 < 表单弹窗 100 < CmdDialog 150 < ConfirmDialog 200 < ConfirmBox 210 -->
   <div v-if="busyCount > 0" class="busy-mask"><span class="busy-spinner"></span>加载中…</div>
   <CmdDialog />
   <ConfirmDialog />
+  <ConfirmBox />
   <ToastList />
 </template>
 

@@ -1,24 +1,22 @@
 // @vitest-environment happy-dom
-// 无 @vue/test-utils：手动 createApp().mount() 挂载 SFC；
-// router / plugin-dialog mock 模式参考 src/components/WorkspaceDetail.test.ts
+// 手动 createApp().mount() 挂载 SFC；plugin-dialog open/hubExists mock，
+// 切换行为（hub.path 变化触发 App.vue 的 MainView :key 重挂载）由 App 层保证
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createApp, type App } from "vue";
+import { createApp, nextTick, type App } from "vue";
 import { createPinia, setActivePinia } from "pinia";
 
 const mocks = vi.hoisted(() => ({
-  confirm: vi.fn<(message: string) => Promise<boolean>>(),
-  navigate: vi.fn<(v: "startup" | "main") => void>(),
+  open: vi.fn<() => Promise<string | string[] | null>>(),
+  hubExists: vi.fn<(p: string) => Promise<boolean>>(),
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  confirm: mocks.confirm,
+  open: mocks.open,
 }));
 
-// 只 mock navigate：currentView 保持真实模块（不触发视图切换副作用）
-vi.mock("../router", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../router")>();
-  return { ...actual, navigate: mocks.navigate };
-});
+vi.mock("../lib/gws-bridge", () => ({
+  hubExists: mocks.hubExists,
+}));
 
 import { useHubStore } from "../stores/hub";
 import TopBar from "./TopBar.vue";
@@ -26,7 +24,6 @@ import TopBar from "./TopBar.vue";
 let app: App | null = null;
 let el: HTMLElement | null = null;
 
-/** 挂载 TopBar（tab=ws）；onOpenAbout 收集 About 入口的 open-about emit */
 function mountTopBar(onOpenAbout?: () => void) {
   const pinia = createPinia();
   setActivePinia(pinia);
@@ -39,16 +36,35 @@ function mountTopBar(onOpenAbout?: () => void) {
   app.mount(el);
 }
 
-/** TopBar 的 hub 路径按钮（文案为 hub.path + ▾） */
-function hubButton(): HTMLButtonElement {
+/** 打开切换弹窗（v-if 渲染须等 nextTick） */
+async function openSwitchDialog() {
   const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
-    .find((b) => b.textContent?.trim() === "/hub ▾");
-  if (!btn) throw new Error("hub 路径按钮未找到");
-  return btn;
+    .find((b) => b.textContent?.trim() === "切换");
+  if (!btn) throw new Error("「切换」按钮未找到");
+  btn.click();
+  await nextTick();
+  const dialog = el!.querySelector(".dialog");
+  if (!dialog) throw new Error("切换弹窗未打开");
+  return dialog;
+}
+
+/** 弹窗内文本输入框填值 */
+function setHubPath(value: string) {
+  const input = el!.querySelector<HTMLInputElement>(".dialog input");
+  if (!input) throw new Error("弹窗输入框未找到");
+  input.value = value;
+  input.dispatchEvent(new Event("input"));
+}
+
+function clickDialogButton(text: string) {
+  const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>(".dialog button"))
+    .find((b) => b.textContent?.trim() === text);
+  if (!btn) throw new Error(`弹窗按钮「${text}」未找到`);
+  btn.click();
 }
 
 beforeEach(() => {
-  mocks.confirm.mockResolvedValue(false);
+  mocks.hubExists.mockResolvedValue(true);
 });
 
 afterEach(() => {
@@ -59,67 +75,104 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("TopBar hub 路径按钮防误触", () => {
-  it("按钮渲染 hub.path ▾", () => {
+describe("TopBar 切换按钮", () => {
+  it("顶栏只渲染「切换」二字（不再占位展示长路径）；hub 路径在 title 提示里保留", async () => {
     mountTopBar();
-    expect(hubButton().textContent?.trim()).toBe("/hub ▾");
+    const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === "切换")!;
+    expect(btn).toBeTruthy();
+    expect(btn.title).toBe("/hub");
+    expect(el!.textContent).not.toContain("/hub ▾");
   });
 
-  it("点击先 confirm；取消 → 不导航", async () => {
+  it("点击开弹窗：回显当前 hub 路径；tab 按钮不触发弹窗", async () => {
     mountTopBar();
-    mocks.confirm.mockResolvedValue(false);
-    hubButton().click();
-    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
-    expect(mocks.confirm.mock.calls[0]![0]).toContain("切换");
-    // 等一拍确认没有任何导航
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mocks.navigate).not.toHaveBeenCalled();
-  });
+    await openSwitchDialog();
+    expect(el!.querySelector<HTMLInputElement>(".dialog input")!.value).toBe("/hub");
 
-  it("confirm 确认 → 清 lastHub 并 navigate('startup')（否则 StartupView 自动回跳，用户选不了新 hub）", async () => {
-    mountTopBar();
-    const { useSettingsStore } = await import("../stores/settings");
-    const settings = useSettingsStore();
-    settings.lastHub = "/old/hub";
-    mocks.confirm.mockResolvedValue(true);
-    hubButton().click();
-    await vi.waitFor(() => {
-      expect(mocks.navigate).toHaveBeenCalledWith("startup");
-      expect(settings.lastHub).toBe("");
-    });
-    expect(mocks.navigate).toHaveBeenCalledTimes(1);
-  });
-
-  it("confirm reject（异常）→ 按取消处理，不导航", async () => {
-    mountTopBar();
-    mocks.confirm.mockRejectedValue(new Error("dialog 不可用"));
-    hubButton().click();
-    await vi.waitFor(() => expect(mocks.confirm).toHaveBeenCalledTimes(1));
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mocks.navigate).not.toHaveBeenCalled();
-  });
-
-  it("tab 按钮不经 confirm（防误触只针对 hub 切换）", async () => {
-    mountTopBar();
     const reposBtn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "仓库")!;
     reposBtn.click();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(mocks.confirm).not.toHaveBeenCalled();
-    expect(mocks.navigate).not.toHaveBeenCalled();
+    await nextTick();
+    // tab 切换是 emit，不碰弹窗（弹窗仍开着）
+    expect(el!.querySelector(".dialog")).toBeTruthy();
+  });
+});
+
+describe("SwitchHubDialog", () => {
+  it("切换到新 hub：校验通过 → setHub + lastHub 记忆 + 关窗（hub.path 变化令 MainView 重挂载）", async () => {
+    mountTopBar();
+    const { useSettingsStore } = await import("../stores/settings");
+    const settings = useSettingsStore();
+    const hub = useHubStore();
+    await openSwitchDialog();
+
+    setHubPath("/new/hub");
+    await nextTick();
+    clickDialogButton("打开 Hub");
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull());
+    expect(hub.path).toBe("/new/hub");
+    expect(settings.lastHub).toBe("/new/hub");
+  });
+
+  it("非法目录：hubExists false → 错误提示、不关窗、hub 不变", async () => {
+    mountTopBar();
+    const hub = useHubStore();
+    mocks.hubExists.mockResolvedValue(false);
+    await openSwitchDialog();
+
+    setHubPath("/not/a/hub");
+    await nextTick();
+    clickDialogButton("打开 Hub");
+    await vi.waitFor(() => expect(el!.textContent).toContain("该目录不是 gws hub"));
+    expect(el!.querySelector(".dialog")).toBeTruthy();
+    expect(hub.path).toBe("/hub");
+  });
+
+  it("浏览按钮：open 选中的目录回填输入框", async () => {
+    mountTopBar();
+    mocks.open.mockResolvedValue("/picked/dir");
+    await openSwitchDialog();
+
+    clickDialogButton("浏览…");
+    await vi.waitFor(() => expect(el!.querySelector<HTMLInputElement>(".dialog input")!.value).toBe("/picked/dir"));
+  });
+
+  it("同路径 no-op：路径未改直接打开 → 关窗、不动 store（setHub 清列表但 MainView 不重挂载会留空页面）", async () => {
+    mountTopBar();
+    const hub = useHubStore();
+    hub.workspaces = [{ name: "ws-a", title: "", stage: "dev", modules: 1, branch: "b" }];
+    await openSwitchDialog();
+
+    // 不改输入（回显即当前 hub）直接点打开
+    clickDialogButton("打开 Hub");
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull());
+    expect(hub.path).toBe("/hub");
+    expect(mocks.hubExists).not.toHaveBeenCalled();
+  });
+
+  it("取消关窗：hub 不变", async () => {
+    mountTopBar();
+    const hub = useHubStore();
+    await openSwitchDialog();
+
+    setHubPath("/other");
+    await nextTick();
+    clickDialogButton("取消");
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull());
+    expect(hub.path).toBe("/hub");
   });
 });
 
 describe("TopBar About 入口", () => {
-  it("按钮文案「当前版本」（原 About gws CLI）：点击 emit open-about，不经 confirm", async () => {
+  it("按钮文案「当前版本」：点击 emit open-about", async () => {
     const opened = vi.fn();
     mountTopBar(opened);
     const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "当前版本");
-    expect(btn).toBeTruthy(); // 旧文案已替换
+    expect(btn).toBeTruthy();
     btn!.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(opened).toHaveBeenCalledTimes(1);
-    expect(mocks.confirm).not.toHaveBeenCalled(); // 仅 hub 切换需 confirm
   });
 });

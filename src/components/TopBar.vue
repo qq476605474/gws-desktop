@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { ref } from "vue";
 import { useHubStore } from "../stores/hub";
-import { useSettingsStore } from "../stores/settings";
-import { navigate } from "../router";
+import SwitchHubDialog from "./SwitchHubDialog.vue";
 
 export type Tab = "ws" | "repos" | "envs" | "docs";
 defineProps<{ tab: Tab }>();
@@ -12,28 +11,15 @@ const emit = defineEmits<{
   (e: "open-settings"): void;
 }>();
 const hub = useHubStore();
-const settings = useSettingsStore();
-
-// 防误触：hub 按钮点击不是切 tab 而是离开整个 main，
-// WorkspacesTab 将重挂载、已开详情与滚动全丢——先原生确认，确认后才跳转
-async function switchHub() {
-  let ok = false;
-  try {
-    ok = await confirm("要切换/重新选择 hub 目录吗？当前页面状态（如已打开的需求详情）将丢失。");
-  } catch {
-    return; // 理论上不 reject；万一异常按取消处理
-  }
-  if (!ok) return;
-  // 清 lastHub：否则 StartupView 挂载即读 lastHub 自动回跳 main，用户根本没机会选新 hub
-  settings.lastHub = "";
-  navigate("startup");
-}
+// hub 目录路径长（顶栏展示不全也占位）：收敛为「切换」按钮，路径在弹窗内
+// 回显查看/修改——切换防误触由弹窗「确认后 hub.path 变化才重挂载」自然保证
+const showSwitch = ref(false);
 </script>
 
 <template>
   <header class="topbar">
     <span class="brand">GwsDesk</span>
-    <button class="hub" :title="hub.path || '选择 Hub'" @click="switchHub">{{ hub.path || "选择 Hub" }} ▾</button>
+    <button class="hub" :title="hub.path || '选择 Hub'" @click="showSwitch = true">切换</button>
     <nav>
       <button :class="{ active: tab === 'ws' }" @click="emit('update:tab', 'ws')">需求</button>
       <button :class="{ active: tab === 'repos' }" @click="emit('update:tab', 'repos')">仓库</button>
@@ -44,14 +30,12 @@ async function switchHub() {
     <button @click="emit('open-about')">当前版本</button>
     <button @click="emit('open-settings')">设置</button>
   </header>
+  <SwitchHubDialog v-if="showSwitch" @close="showSwitch = false" />
 </template>
 
 <style scoped>
 .topbar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
 .brand { font-weight: 700; }
-/* hub 路径可能很长：溢出 hidden 使按钮可收缩至内容以下（flex 项 min-width:auto 归零），
-   省略号截断 + title 提示完整路径；nav/其余按钮均已 nowrap 不会被压折 */
-.hub { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
 .spacer { flex: 1; }
 nav { display: flex; gap: 4px; }
 /* 显式 fg：不依赖 UA 按钮色（未设 color-scheme 时 dark 主题下黑字压深底仅 1.80:1）。

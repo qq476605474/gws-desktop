@@ -6,7 +6,7 @@ export const HUB_ROOT = "__hub__";
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { confirm } from "@tauri-apps/plugin-dialog";
+import { confirmBox } from "../../lib/confirm";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
 import { runGws, openPath, copyText } from "../../lib/gws-bridge";
@@ -14,6 +14,7 @@ import { toast } from "../../lib/toast";
 import { stripAnsi } from "../../lib/ansi";
 import { parseDocDir, parseDocLs, parseLs, type DocEntry } from "../../lib/parse";
 import PathActions from "../PathActions.vue";
+import AddDocDialog from "../AddDocDialog.vue";
 
 const hub = useHubStore();
 const cmd = useCmdStore();
@@ -22,7 +23,7 @@ const docs = ref<DocEntry[]>([]);
 const docsWs = ref(""); // 数据归属快照：doc ls 成功时随 docs/docDir 一起更新，
 // 失败时不动——行内命令 cwd 与目录行/文件路径均以它为准，保持自洽。
 // hub 根文档的归属也存 HUB_ROOT 哨兵：hub 模式的 UI 差异（目录路径/上传/新建）全部由此派生
-const newFile = ref("");
+const showNew = ref(false);
 const docDir = ref("");
 const err = ref("");
 const submitting = ref(false);
@@ -103,32 +104,9 @@ async function refresh() {
   }
 }
 
-async function create() {
-  // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效（submitting 兜底）；
-  // isRunning 与 push/commit 的入口守卫统一
-  if (submitting.value || cmd.isRunning()) return;
-  const name = newFile.value.trim(); // 纯空格输入视同空，避免把空白当文件名传给 gws
-  // doc new 在 gws 侧写死当前工作区 docdir，对 hub 根文档无意义——hub 归属时入口
-  // 拦截（输入框已禁用，此处防程序化点击绕过）
-  if (!name || !docsWs.value || isHubData.value) return;
-  if (/\s/.test(name)) {
-    // gws doc new 不禁止空格名，但含空格的文件名会“已创建却列不出来”
-    // （历史遗留文件也照样列出）——入口直接拒绝，输入习惯保持单个词
-    err.value = "文档名不能包含空格";
-    return;
-  }
-  submitting.value = true;
-  try {
-    const run = await cmd.execDialog(`gws doc new ${name}`, ["doc", "new", name], `${hub.path}/ws/${docsWs.value}`);
-    // exec 返回时命令仍在跑（事件流异步），须等终态再刷新，否则拿到的是旧列表
-    await cmd.waitDone(run);
-    if (run.state === "done") newFile.value = ""; // 失败保留输入便于重试
-  } catch (e) {
-    // exec reject（如 IPC 失败）：错误进展示位（模式同 WorkspaceDetail.doCmd 的 stErr）
-    err.value = String(e);
-  } finally {
-    submitting.value = false;
-  }
+/** 新建文档弹窗关闭即刷新：创建成功/失败/取消统一走此路径（模式同 ReposTab.onAddClose） */
+async function onNewClose() {
+  showNew.value = false;
   await refresh();
 }
 
@@ -138,7 +116,7 @@ async function push(file: string) {
   // doc push 上传 Confluence 是写远程操作：先确认再执行（模式同 EnvsTab.rmEnv）
   let ok = false;
   try {
-    ok = await confirm(`上传 ${file} 到 Confluence？`);
+    ok = await confirmBox(`上传 ${file} 到 Confluence？`);
   } catch {
     return; // 理论上不 reject；万一异常按取消处理
   }
@@ -208,9 +186,8 @@ onMounted(refresh);
         <option :value="HUB_ROOT">根文档</option>
         <option v-for="w in hub.workspaces.filter((w) => w.name !== HUB_ROOT)" :key="w.name" :value="w.name">{{ w.name }}</option>
       </select>
-      <!-- doc new 写死当前工作区 docdir：hub 根文档不可新建，输入与按钮随归属禁用 -->
-      <input v-model="newFile" autocapitalize="off" spellcheck="false" placeholder="新文档名.md" :disabled="isHubData || cmd.isRunning()" />
-      <button class="primary" :disabled="!newFile.trim() || isHubData || cmd.isRunning() || submitting" @click="create">+ 新建文档</button>
+      <!-- doc new 写死当前工作区 docdir：hub 根文档不可新建，按钮随归属禁用（弹窗内再兜底） -->
+      <button class="primary" :disabled="isHubData || cmd.isRunning()" @click="showNew = true">+ 新建文档</button>
       <!-- doc commit 实为整个 hub 文档仓库的 git add -A（与单行文件无关），收敛为工具栏统一入口；hub 根文档亦可提交 -->
       <button :disabled="cmd.isRunning()" @click="commit">commit 全部文档</button>
     </div>
@@ -241,15 +218,16 @@ onMounted(refresh);
     <p v-else-if="!err && !hub.error && loading" class="muted">加载中…</p>
     <p v-else-if="!err && !hub.error" class="muted">{{ isHubData ? "（暂无文档）" : "（暂无文档——在当前需求 gws doc new 创建）" }}</p>
     <p class="muted">上传依赖 GWS_DOC_UPLOADER 指向的脚本（未配置时 gws 会提示）。doc push 的输出见命令弹窗。</p>
+    <!-- doc new 写死当前工作区 docdir：hub 归属不该开弹窗，ws 由 docsWs 快照锁定数据归属 -->
+    <AddDocDialog v-if="showNew && !isHubData && docsWs" :ws="docsWs" @close="onNewClose" />
   </div>
 </template>
 
 <style scoped>
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
-/* 需求筛选 select 与相邻输入框等高、宽度各安其位（用户反馈 #12）：全局
-   width:100%/max-width:320px 在 flex 行里宽度漂移，显式 flex-basis 接管 */
+/* 需求筛选 select 与相邻控件等高（用户反馈 #12）：全局 width:100%/max-width:320px
+   在 flex 行里宽度漂移，显式 flex-basis 接管 */
 .toolbar select { flex: 0 0 220px; height: var(--control-h); }
-.toolbar input { flex: 1 1 240px; min-width: 180px; height: var(--control-h); }
 .group-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 /* table/th/td 基础样式全局化（base.css） */
 .muted { color: var(--fg-muted); font-size: 12px; }
