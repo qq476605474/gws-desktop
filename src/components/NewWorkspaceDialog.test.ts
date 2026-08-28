@@ -44,6 +44,12 @@ let nextId = 0;
 /** emit 顺序探针：created 必须先于 close（父组件先刷新列表再卸载弹窗） */
 const events: string[] = [];
 
+/** 今日日期 YYYYMMDD（与组件 composedBranch 同格式，断言拼接结果用） */
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+}
+
 /** 挂载弹窗（预置两个候选模块：模块必选后，创建用例须先勾选才能点创建） */
 function mountDialog() {
   const pinia = createPinia();
@@ -65,11 +71,27 @@ function mountDialog() {
   app.mount(el);
 }
 
-/** 第 idx 个文本输入框（0=名称，序固定：名称/标题/自定义分支/基线来源——名称恒渲染不漂移） */
-function setInput(idx: number, value: string) {
-  const input = el!.querySelectorAll<HTMLInputElement>("input")[idx]!;
-  input.value = value;
-  input.dispatchEvent(new Event("input"));
+/** 按 placeholder 片段定位文本输入框（字段增删/换序不漂移；单选 radio 无 placeholder 不受扰） */
+function inputByPlaceholder(fragment: string): HTMLInputElement {
+  const input = Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
+    .find((i) => i.placeholder.includes(fragment));
+  if (!input) throw new Error(`输入框（placeholder 含「${fragment}」）未找到`);
+  return input;
+}
+
+function setName(v: string) { const i = inputByPlaceholder("目录名"); i.value = v; i.dispatchEvent(new Event("input")); }
+function setPrefix(v: string) { const i = inputByPlaceholder("英文前缀"); i.value = v; i.dispatchEvent(new Event("input")); }
+function setSuffix(v: string) { const i = inputByPlaceholder("英文后缀"); i.value = v; i.dispatchEvent(new Event("input")); }
+function setFullBranch(v: string) { const i = inputByPlaceholder("如 feature-20260828"); i.value = v; i.dispatchEvent(new Event("input")); }
+function setTitle(v: string) { const i = inputByPlaceholder("中文标题"); i.value = v; i.dispatchEvent(new Event("input")); }
+
+/** 切分支填法（单选 change 派发，模式同 checkbox 勾选）：compose=前缀组合 / full=完整分支名 */
+async function switchMode(mode: "compose" | "full") {
+  const radio = Array.from(el!.querySelectorAll<HTMLInputElement>('input[type="radio"]'))
+    .find((r) => r.value === mode)!;
+  radio.checked = true;
+  radio.dispatchEvent(new Event("change"));
+  await nextTick();
 }
 
 /** 勾选模块复选框（checkbox v-model 监听 change 事件）；两次勾选之间须等 patch：
@@ -86,8 +108,7 @@ async function checkModule(name: string) {
 
 /** 基线来源输入框填值（按 placeholder 定位，与序号解耦） */
 function setFrom(value: string) {
-  const input = Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
-    .find((i) => i.placeholder.includes("留空=主干"))!;
+  const input = inputByPlaceholder("留空=主干");
   input.value = value;
   input.dispatchEvent(new Event("input"));
 }
@@ -125,32 +146,58 @@ afterEach(() => {
 });
 
 describe("NewWorkspaceDialog", () => {
-  it("名称 placeholder 写明目录名可中文、留空时从分支名反推（gws new 名称与 --branch 独立）", () => {
+  it("名称 placeholder 写明必填且可中文（目录名，不再有留空反推分支名的旧语义）", () => {
     mountDialog();
-    const placeholder = el!.querySelectorAll<HTMLInputElement>("input")[0]!.placeholder;
+    const placeholder = inputByPlaceholder("目录名").placeholder;
+    expect(placeholder).toContain("必填");
     expect(placeholder).toContain("可中文");
-    expect(placeholder).toContain("反推");
   });
 
   it("创建按钮在名称为空或未勾选模块时禁用（名称与模块均必填，模块不再有「不选=全部仓库」语义）", async () => {
     mountDialog();
     const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "创建")!;
-    expect(btn.disabled).toBe(true); // 名称空 + 未选模块
-    setInput(0, "demo");
+    expect(btn.disabled).toBe(true); // 名称空 + 未选模块（组合模式前缀已有默认值）
+    setName("demo");
     await nextTick();
     expect(btn.disabled).toBe(true); // 模块必选：仅填名称仍禁用
     await checkModule("order-service");
     await vi.waitFor(() => expect(btn.disabled).toBe(false));
+    // 完整分支名模式：分支为空禁用（该模式下分支是必填项）
+    await switchMode("full");
+    await vi.waitFor(() => expect(btn.disabled).toBe(true));
+    setFullBranch("feature-20260828-demo");
+    await vi.waitFor(() => expect(btn.disabled).toBe(false));
+  });
+
+  it("组合模式前缀清空禁用创建（空前缀拼出的分支以 - 开头不合法）", async () => {
+    mountDialog();
+    setName("demo");
+    await checkModule("order-service");
+    await vi.waitFor(() => {
+      const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+        .find((b) => b.textContent?.trim() === "创建")!;
+      return expect(btn.disabled).toBe(false);
+    });
+    setPrefix("");
+    await nextTick();
+    const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
+      .find((b) => b.textContent?.trim() === "创建")!;
+    expect(btn.disabled).toBe(true);
   });
 
   it("命令成功（exit 0）：created 先于 close 通知（父组件先刷新列表再卸载弹窗）", async () => {
     mountDialog();
-    setInput(0, "demo");
+    setName("demo");
     await checkModule("order-service");
     await clickCreate();
+    // 组合模式默认：feature-<今日>-demo（分支名留空退回名称作后缀）
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--modules", "order-service"], "/hub", 30000),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "demo", "--modules", "order-service", "--branch", `feature-${today()}-demo`],
+        "/hub",
+        30000,
+      ),
     );
     await exitWith(1, 0);
     await vi.waitFor(() => expect(events).toEqual(["created", "close"]));
@@ -158,7 +205,7 @@ describe("NewWorkspaceDialog", () => {
 
   it("命令失败（exit 1）：不 emit created/close，弹窗保留输入便于重试", async () => {
     mountDialog();
-    setInput(0, "demo");
+    setName("demo");
     await checkModule("order-service");
     await clickCreate();
     await exitWith(1, 1);
@@ -174,7 +221,7 @@ describe("NewWorkspaceDialog", () => {
   it("execDialog reject（IPC 失败）：err 内联提示、不关窗不 emit created", async () => {
     mountDialog();
     mocks.runGwsStream.mockRejectedValueOnce(new Error("gws 未安装"));
-    setInput(0, "demo");
+    setName("demo");
     await checkModule("order-service");
     await clickCreate();
     await vi.waitFor(() => expect(el!.textContent).toContain("gws 未安装"));
@@ -184,7 +231,7 @@ describe("NewWorkspaceDialog", () => {
 
   it("submitting 期间点 mask/取消不关窗（防 IPC 间隙卸载致 created 通知丢失）", async () => {
     mountDialog();
-    setInput(0, "demo");
+    setName("demo");
     await checkModule("order-service");
     await clickCreate();
     // 命令在途（无 exit 事件 → waitDone 挂起、submitting=true）：
@@ -199,53 +246,89 @@ describe("NewWorkspaceDialog", () => {
     expect(events).toEqual([]);
     expect(el!.querySelector(".dialog")).toBeTruthy();
   });
+});
 
-  it("参数拼装：--modules 恒传（模块必选，多模块逗号 join），标题/前缀/自定义分支按需附加", async () => {
+describe("NewWorkspaceDialog 分支两种填法（用户反馈 #12：拆开填写、提交拼接、互斥）", () => {
+  it("组合模式：预览实时拼接 <前缀>-<日期>-<分支名>，分支名留空退回名称", async () => {
     mountDialog();
-    setInput(0, "demo");
-    setInput(1, "结算改版"); // 标题
-    // 自定义分支独立传入（文本输入序固定：名称/标题/自定义分支）：
-    // 名称手填优先，目录名用 demo，不因分支名覆盖
-    setInput(2, "feature-20260827-demo");
+    setName("收银台改版");
+    await nextTick();
+    expect(el!.textContent).toContain(`分支：feature-${today()}-收银台改版`); // 后缀留空用名称
+    setPrefix("hotfix");
+    setSuffix("checkout-revamp");
+    await nextTick();
+    expect(el!.textContent).toContain(`分支：hotfix-${today()}-checkout-revamp`);
+  });
+
+  it("组合模式提交：目录名中文 + 英文后缀并存，--branch 传完整拼接值（名称与分支独立）", async () => {
+    mountDialog();
+    setName("收银台改版");
+    setPrefix("hotfix");
+    setSuffix("checkout-revamp");
     await checkModule("order-service");
-    await checkModule("user-web"); // join 顺序即勾选顺序
-    // 前缀切 hotfix
-    const select = el!.querySelector<HTMLSelectElement>("select")!;
-    select.value = "hotfix";
-    select.dispatchEvent(new Event("change"));
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "demo", "--modules", "order-service,user-web", "--title", "结算改版", "--prefix", "hotfix", "--branch", "feature-20260827-demo"],
+        ["new", "收银台改版", "--modules", "order-service", "--branch", `hotfix-${today()}-checkout-revamp`],
         "/hub",
         30000,
       ),
     );
   });
 
-  it("分支前缀集合：覆盖市面常用前缀（feature 默认 + bugfix/hotfix/release/support/docs/refactor/test/chore）", () => {
+  it("完整分支名模式：原样传 --branch，不拼接", async () => {
     mountDialog();
-    const select = el!.querySelector<HTMLSelectElement>("select")!;
-    expect(Array.from(select.options).map((o) => o.value)).toEqual([
-      "feature", "bugfix", "hotfix", "release", "support", "docs", "refactor", "test", "chore",
-    ]);
-    // 文案风格：默认项标注「(默认)」，其余为纯前缀名
-    expect(Array.from(select.options).map((o) => o.textContent)).toEqual([
-      "feature (默认)", "bugfix", "hotfix", "release", "support", "docs", "refactor", "test", "chore",
-    ]);
-  });
-
-  it("前缀 bugfix 提交：非默认前缀传 --prefix bugfix（gws 侧接受任意纯字母前缀）", async () => {
-    mountDialog();
-    setInput(0, "demo");
+    setName("demo");
+    await switchMode("full");
+    setFullBranch("feature-20260828-checkout-revamp");
     await checkModule("order-service");
-    const select = el!.querySelector<HTMLSelectElement>("select")!;
-    select.value = "bugfix";
-    select.dispatchEvent(new Event("change"));
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "demo", "--modules", "order-service", "--prefix", "bugfix"],
+        ["new", "demo", "--modules", "order-service", "--branch", "feature-20260828-checkout-revamp"],
+        "/hub",
+        30000,
+      ),
+    );
+  });
+
+  it("两模式互斥：同一时刻只渲染一组的输入（组合=前缀+分支名，完整=整支输入）", async () => {
+    mountDialog();
+    // 默认组合模式：前缀/分支名在，完整分支名输入不在
+    expect(() => inputByPlaceholder("英文前缀")).not.toThrow();
+    expect(() => inputByPlaceholder("英文后缀")).not.toThrow();
+    expect(() => inputByPlaceholder("如 feature-20260828")).toThrow();
+    await switchMode("full");
+    expect(() => inputByPlaceholder("如 feature-20260828")).not.toThrow();
+    expect(() => inputByPlaceholder("英文前缀")).toThrow();
+    expect(() => inputByPlaceholder("英文后缀")).toThrow();
+    // 切回组合模式：字段回到视野（各模式输入值保留，不因切换丢失）
+    await switchMode("compose");
+    expect(() => inputByPlaceholder("英文前缀")).not.toThrow();
+  });
+
+  it("前缀建议 datalist：覆盖市面常用前缀（feature 默认 + bugfix/hotfix/release/support/docs/refactor/test/chore）", () => {
+    mountDialog();
+    const options = Array.from(el!.querySelectorAll("#prefix-list option"));
+    expect(options.map((o) => o.getAttribute("value"))).toEqual([
+      "feature", "bugfix", "hotfix", "release", "support", "docs", "refactor", "test", "chore",
+    ]);
+    // 前缀输入框是自由文本（datalist 仅建议）：非列表值可直接填
+    setPrefix("release2");
+    expect(inputByPlaceholder("英文前缀").value).toBe("release2");
+  });
+
+  it("参数拼装：标题/基线按需附加，--branch 恒传（组合模式拼接值）", async () => {
+    mountDialog();
+    setName("demo");
+    setTitle("结算改版");
+    setFrom("需求A 阶段2");
+    await checkModule("order-service");
+    await checkModule("user-web"); // join 顺序即勾选顺序
+    await clickCreate();
+    await vi.waitFor(() =>
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "demo", "--modules", "order-service,user-web", "--from", "需求A,阶段2", "--title", "结算改版", "--branch", `feature-${today()}-demo`],
         "/hub",
         30000,
       ),
@@ -256,24 +339,28 @@ describe("NewWorkspaceDialog", () => {
 describe("NewWorkspaceDialog 基线来源（--from）", () => {
   it("留空不传：args 无 --from（gws 默认走创建时基线，主干兜底）", async () => {
     mountDialog();
-    setInput(0, "demo");
+    setName("demo");
     await checkModule("order-service");
     await clickCreate();
     // 精确数组断言：--from 不出现（--from 仅在有输入时附加）
     await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--modules", "order-service"], "/hub", 30000),
+      expect(mocks.runGwsStream).toHaveBeenCalledWith(
+        ["new", "demo", "--modules", "order-service", "--branch", `feature-${today()}-demo`],
+        "/hub",
+        30000,
+      ),
     );
   });
 
   it("多值解析：空格与逗号分隔均归一为逗号 join（顺序即优先级），位置在 --modules 之后", async () => {
     mountDialog();
-    setInput(0, "demo");
+    setName("demo");
     await checkModule("order-service");
     setFrom("需求A 阶段2"); // 空格分隔两个基线
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "demo", "--modules", "order-service", "--from", "需求A,阶段2"],
+        ["new", "demo", "--modules", "order-service", "--from", "需求A,阶段2", "--branch", `feature-${today()}-demo`],
         "/hub",
         30000,
       ),
@@ -285,117 +372,10 @@ describe("NewWorkspaceDialog 基线来源（--from）", () => {
     await clickCreate();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "demo", "--modules", "order-service", "--from", "需求A,阶段2"],
+        ["new", "demo", "--modules", "order-service", "--from", "需求A,阶段2", "--branch", `feature-${today()}-demo`],
         "/hub",
         30000,
       ),
     );
-  });
-});
-
-describe("NewWorkspaceDialog 目录名与分支名独立（用户反馈 #5/#11）", () => {
-  /** 填自定义分支名（按 placeholder 定位，与序号解耦） */
-  function setCustomBranch(value: string) {
-    const input = Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
-      .find((i) => i.placeholder.includes("留空则用前缀"))!;
-    input.value = value;
-    input.dispatchEvent(new Event("input"));
-  }
-
-  /** 名称输入框（以 placeholder 识别，避免与标题/分支输入框混淆；恒渲染） */
-  function nameInput(): HTMLInputElement | null {
-    return Array.from(el!.querySelectorAll<HTMLInputElement>("input"))
-      .find((i) => i.placeholder.includes("目录名")) ?? null;
-  }
-
-  it("中文目录名 + 英文分支名并存：名称手填优先，--branch 独立传入（用户反馈 #11 核心）", async () => {
-    mountDialog();
-    setInput(0, "收银台改版");
-    setCustomBranch("feature-20260827-checkout");
-    await nextTick();
-    expect(nameInput()).toBeTruthy(); // 两个输入框同时存在
-    await checkModule("order-service");
-    await clickCreate();
-    await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "收银台改版", "--modules", "order-service", "--branch", "feature-20260827-checkout"],
-        "/hub",
-        30000,
-      ),
-    );
-  });
-
-  it("名称留空 + customBranch 命中 <前缀>-YYYYMMDD-<名称>：说明行显示反推结果、提交首参为反推值", async () => {
-    mountDialog();
-    setCustomBranch("feature-20260827-abc");
-    await nextTick();
-    expect(nameInput()).toBeTruthy(); // 名称输入框恒渲染（不再因分支隐藏）
-    expect(el!.textContent).toContain("名称未填：目录名将从分支名反推为 abc");
-    // 名称未手填也可创建（分支名已含名称信息，按钮不依赖名称输入；模块仍须勾选）
-    await checkModule("order-service");
-    await clickCreate();
-    await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "abc", "--modules", "order-service", "--branch", "feature-20260827-abc"],
-        "/hub",
-        30000,
-      ),
-    );
-  });
-
-  it("名称留空 + customBranch 不匹配反推模式：目录名退回完整分支名", async () => {
-    mountDialog();
-    setCustomBranch("mybranch");
-    await nextTick();
-    expect(el!.textContent).toContain("名称未填：目录名将从分支名反推为 mybranch");
-    await checkModule("order-service");
-    await clickCreate();
-    await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(
-        ["new", "mybranch", "--modules", "order-service", "--branch", "mybranch"],
-        "/hub",
-        30000,
-      ),
-    );
-  });
-
-  it("customBranch 清空：反推说明行消失、提交用手填值（原行为不变）", async () => {
-    mountDialog();
-    setCustomBranch("feature-20260827-abc");
-    await nextTick();
-    expect(el!.textContent).toContain("名称未填：目录名将从分支名反推为 abc");
-    setCustomBranch("");
-    await nextTick();
-    expect(el!.textContent).not.toContain("名称未填");
-    setInput(0, "demo");
-    await checkModule("order-service");
-    await clickCreate();
-    await vi.waitFor(() =>
-      expect(mocks.runGwsStream).toHaveBeenCalledWith(["new", "demo", "--modules", "order-service"], "/hub", 30000),
-    );
-  });
-
-  it("名称手填后反推说明行不显示（手填优先，无需提示反推值）", async () => {
-    mountDialog();
-    setInput(0, "收银台改版");
-    setCustomBranch("feature-20260827-checkout");
-    await nextTick();
-    expect(el!.textContent).not.toContain("名称未填");
-  });
-
-  it("名称含中文且未填自定义分支：提示默认分支将含中文（用户反馈：两字段语义不同，前者组合默认分支、后者填完整分支名）", async () => {
-    mountDialog();
-    setInput(0, "收银台改版");
-    await nextTick();
-    expect(el!.textContent).toContain("名称含中文且未填自定义分支");
-    // 填了完整分支名后提示消失
-    setCustomBranch("feature-20260828-checkout-revamp");
-    await nextTick();
-    expect(el!.textContent).not.toContain("名称含中文且未填自定义分支");
-    // 英文名不触发提示
-    setCustomBranch("");
-    setInput(0, "checkout-revamp");
-    await nextTick();
-    expect(el!.textContent).not.toContain("名称含中文且未填自定义分支");
   });
 });

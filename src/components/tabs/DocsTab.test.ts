@@ -387,7 +387,7 @@ describe("DocsTab.refresh", () => {
 });
 
 describe("DocsTab 根文档源（默认）", () => {
-  it("挂载即根文档：doc ls 于 hub 根 cwd；首行 docs 为正常态，表格渲染 hub 列表且无上传按钮、新建禁用、commit 保留", async () => {
+  it("挂载即根文档：doc ls 于 hub 根 cwd；首行 docs 为正常态，表格渲染 hub 列表且无上传按钮、新建可用、commit 保留", async () => {
     mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
     mountTab();
     await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["doc", "ls"], "/hub"));
@@ -398,18 +398,62 @@ describe("DocsTab 根文档源（默认）", () => {
     // 操作列保留（📋 复制文件路径）但无上传按钮：doc push 写死工作区 docdir，hub 根文档无上传语义
     expect(el!.querySelector("thead")!.textContent).toContain("操作");
     expect(Array.from(el!.querySelectorAll("button")).filter((b) => b.textContent?.trim() === "上传")).toHaveLength(0);
-    // doc new 是 ws 级：根文档视图按钮不再置灰（置灰无解释），点击给出选需求的指引
+    // 新建不再被外层校验拦（目标目录弹窗内选，用户反馈 #12）：根文档视图直开弹窗
     const newBtn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "+ 新建文档")!;
     expect(newBtn.disabled).toBe(false);
-    newBtn.click();
-    // toast 不在组件 DOM 里（App.vue 的 ToastList 渲染），断言 mock 调用参数
-    expect(mocks.toast).toHaveBeenCalledWith("文档归属需求目录：请先在筛选中选择一个需求");
-    expect(el!.querySelector(".dialog")).toBeNull(); // 不开弹窗
     // commit 全部文档保留可用
     const commitBtn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
       .find((b) => b.textContent?.trim() === "commit 全部文档")!;
     expect(commitBtn.disabled).toBe(false);
+  });
+
+  it("新建弹窗：根文档视图直开且目标默认根文档，创建于 hub 根（落 docs/ 第一层）", async () => {
+    mocks.runGws.mockResolvedValue({ code: 0, output: hubDocLsOut() });
+    mountTab();
+    await vi.waitFor(() => expect(el!.querySelectorAll("tbody tr").length).toBe(2));
+    mocks.runGws.mockClear();
+
+    clickButton("+ 新建文档");
+    await nextTick();
+    const dialog = el!.querySelector(".dialog")!;
+    expect(dialog).toBeTruthy();
+    // 目标默认 = 外层筛选当前选中（根文档）；选项含根文档与各需求
+    const destSel = dialog.querySelector<HTMLSelectElement>("select")!;
+    expect(destSel.value).toBe(HUB_ROOT);
+    expect(Array.from(destSel.options).map((o) => o.value)).toEqual([HUB_ROOT, "checkout-revamp", "login-crash"]);
+
+    const input = dialog.querySelector<HTMLInputElement>("input")!;
+    input.value = "规划.md";
+    input.dispatchEvent(new Event("input"));
+    await nextTick();
+    clickButton("创建");
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "new", "规划.md"], "/hub", 30000));
+    await exitWith(1, 0);
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull()); // 成功关窗
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenLastCalledWith(["doc", "ls"], "/hub")); // 关窗即刷新
+  });
+
+  it("新建弹窗：目标可切到任意需求（默认外层选中），doc new 于所选需求 cwd", async () => {
+    await mountWsTab(); // 外层选中 checkout-revamp
+
+    clickButton("+ 新建文档");
+    await nextTick();
+    const dialog = el!.querySelector(".dialog")!;
+    const destSel = dialog.querySelector<HTMLSelectElement>("select")!;
+    expect(destSel.value).toBe("checkout-revamp"); // 默认取外层当前筛选
+
+    destSel.value = "login-crash"; // 弹窗内改选别的需求
+    destSel.dispatchEvent(new Event("change"));
+    await nextTick();
+    const input = dialog.querySelector<HTMLInputElement>("input")!;
+    input.value = "排期.md";
+    input.dispatchEvent(new Event("input"));
+    await nextTick();
+    clickButton("创建");
+    await vi.waitFor(() => expect(mocks.runGwsStream).toHaveBeenCalledWith(["doc", "new", "排期.md"], "/hub/ws/login-crash", 30000));
+    await exitWith(1, 0);
+    await vi.waitFor(() => expect(el!.querySelector(".dialog")).toBeNull());
   });
 
   it("hub 模式 commit：doc commit 于 hub 根 cwd（hub 级文档仓库操作，不能拼 /ws/__hub__），结束后刷新", async () => {

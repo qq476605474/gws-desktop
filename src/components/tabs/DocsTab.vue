@@ -1,7 +1,8 @@
 // script setup 不允许 ES 导出，测试需要的哨兵常量放这里
 <script lang="ts">
-// select「Hub 根文档」的哨兵值（工作区名不会取此形），docsWs 归属快照同样用它标记 hub 数据
-export const HUB_ROOT = "__hub__";
+// HUB_ROOT 已抽至 lib/consts（AddDocDialog 等弹窗也要用）；此处再导出供既有测试沿用组件入口导入
+export { HUB_ROOT } from "../../lib/consts";
+import { HUB_ROOT } from "../../lib/consts";
 </script>
 
 <script setup lang="ts">
@@ -104,14 +105,9 @@ async function refresh() {
   }
 }
 
-/** 打开新建文档弹窗：doc new 写死当前工作区 docdir，根文档视图下点入口给出
- *  指引而非置灰——置灰无解释，用户不知道要先选需求 */
+/** 打开新建文档弹窗：目标目录在弹窗内选（根文档/各需求），默认取外层筛选当前选中（用户反馈 #12） */
 function openNew() {
   if (cmd.isRunning()) return;
-  if (isHubData.value || !docsWs.value) {
-    toast("文档归属需求目录：请先在筛选中选择一个需求");
-    return;
-  }
   showNew.value = true;
 }
 
@@ -197,8 +193,8 @@ onMounted(refresh);
         <option :value="HUB_ROOT">根文档</option>
         <option v-for="w in hub.workspaces.filter((w) => w.name !== HUB_ROOT)" :key="w.name" :value="w.name">{{ w.name }}</option>
       </select>
-      <!-- doc new 写死当前工作区 docdir：根文档视图由 openNew 指引拦截，弹窗只在 ws 归属挂载 -->
-      <button class="primary" :disabled="cmd.isRunning()" title="文档创建在所选需求的目录下" @click="openNew">+ 新建文档</button>
+      <!-- 目标目录在弹窗内选（默认=当前筛选），根文档视图也可新建（落 hub docs/ 第一层） -->
+      <button class="primary" :disabled="cmd.isRunning()" title="默认创建到当前筛选目录，弹窗内可选" @click="openNew">+ 新建文档</button>
       <!-- doc commit 实为整个 hub 文档仓库的 git add -A（与单行文件无关），收敛为工具栏统一入口；hub 根文档亦可提交 -->
       <button :disabled="cmd.isRunning()" @click="commit">commit 全部文档</button>
     </div>
@@ -229,8 +225,8 @@ onMounted(refresh);
     <p v-else-if="!err && !hub.error && loading" class="muted">加载中…</p>
     <p v-else-if="!err && !hub.error" class="muted">{{ isHubData ? "（暂无文档）" : "（暂无文档——在当前需求 gws doc new 创建）" }}</p>
     <p class="muted">上传依赖 GWS_DOC_UPLOADER 指向的脚本（未配置时 gws 会提示）。doc push 的输出见命令弹窗。</p>
-    <!-- doc new 写死当前工作区 docdir：hub 归属不该开弹窗，ws 由 docsWs 快照锁定数据归属 -->
-    <AddDocDialog v-if="showNew && !isHubData && docsWs" :ws="docsWs" @close="onNewClose" />
+    <!-- 目标目录弹窗内选：默认外层当前筛选（根文档或需求），挂载不受数据归属限制 -->
+    <AddDocDialog v-if="showNew" :default-dest="wsFilter" @close="onNewClose" />
   </div>
 </template>
 

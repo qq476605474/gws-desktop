@@ -10,39 +10,47 @@ const cmd = useCmdStore();
 const nameInput = ref("");
 const title = ref("");
 const modules = ref<string[]>([]);
-const prefix = ref("feature");
-const customBranch = ref("");
 const fromInput = ref("");
 const err = ref("");
 const submitting = ref(false);
 
-/** gws get 同款反推：<前缀>-YYYYMMDD-<名称> → <名称>；不匹配该模式则退回完整分支名 */
-function deriveName(branch: string): string {
-  const m = /^[a-zA-Z]+-\d{8}-(.+)$/.exec(branch);
-  return m?.[1] ?? branch;
+// 分支两种互斥填法（用户反馈 #12）：组合 = 前缀+分支名（提交时拼 <前缀>-<日期>-<分支名>），
+// 完整 = 整支手填原样使用；单选切换，未选模式的一组输入不渲染（互斥由 v-if 天然保证）
+const branchMode = ref<"compose" | "full">("compose");
+const PREFIXES = ["feature", "bugfix", "hotfix", "release", "support", "docs", "refactor", "test", "chore"];
+const prefix = ref("feature");
+const branchName = ref("");
+const customBranch = ref("");
+
+function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
 }
-/** customBranch 非空时名称从分支名反推（分支名里已有名称信息，不必重复手填） */
-const derivedName = computed(() => {
-  const branch = customBranch.value.trim();
-  return branch ? deriveName(branch) : "";
+/** 组合模式的完整分支（提交即此值）：分支名留空退回名称作后缀（= gws 默认拼接） */
+const composedBranch = computed(() => {
+  const p = prefix.value.trim() || "feature";
+  return `${p}-${today()}-${branchName.value.trim() || nameInput.value.trim()}`;
 });
 /** 基线来源（--from）：空格或逗号分隔可填多个，顺序即优先级（主干自动兜底） */
 const froms = computed(() => fromInput.value.split(/[\s,]+/).filter(Boolean));
+/** 创建可用：名称必填；组合模式前缀必填，完整模式分支必填；模块恒必选 */
+const canCreate = computed(() => {
+  if (!nameInput.value.trim() || !modules.value.length) return false;
+  return branchMode.value === "compose" ? !!prefix.value.trim() : !!customBranch.value.trim();
+});
 
 async function create() {
-  if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
+  if (submitting.value || !canCreate.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效
   err.value = "";
-  const branch = customBranch.value.trim();
-  // 目录名与分支名独立（用户反馈 #11）：名称留填优先（可中文目录名），
-  // 留空且有自定义分支时从分支名反推——两者都空由按钮禁用兜底
-  const name = nameInput.value.trim() || (branch ? derivedName.value : "");
+  const name = nameInput.value.trim();
+  const branch = branchMode.value === "compose" ? composedBranch.value : customBranch.value.trim();
   const args = ["new", name];
   // 模块必选（不选=全部仓库的语义在 GUI 下容易误建超大工作区）
   args.push("--modules", modules.value.join(","));
   if (froms.value.length) args.push("--from", froms.value.join(","));
   if (title.value) args.push("--title", title.value);
-  if (prefix.value !== "feature") args.push("--prefix", prefix.value);
-  if (branch) args.push("--branch", branch);
+  // 分支恒显式传（--branch 优先级高于 gws 默认拼接，预览即所得）
+  args.push("--branch", branch);
   submitting.value = true;
   try {
     const run = await cmd.execDialog(`gws new ${name}`, args, hub.path);
@@ -65,28 +73,23 @@ async function create() {
   <div class="mask" @click.self="!submitting && emit('close')">
     <div class="dialog">
       <h3>新建需求</h3>
-      <!-- gws new 的名称是必填位置参数（无留空反推：留空直接报用法错误）；
-           默认分支 = <前缀>-<日期YYYYMMDD>-<名称>，标题缺省同名称 -->
-      <!-- 名称（目录名，可中文）与自定义分支（完整分支名，全量覆盖默认拼接）两个字段独立；
-           名称留空但有自定义分支时按 gws get 同款规则从分支名反推目录名 -->
-      <label>名称 <input v-model="nameInput" autocapitalize="off" spellcheck="false" placeholder="目录名（可中文），如 收银台改版；留空则从分支名反推" /></label>
-      <p v-if="customBranch.trim() && !nameInput.trim()" class="muted">名称未填：目录名将从分支名反推为 {{ derivedName }}</p>
-      <p v-if="!customBranch.trim() && /[\u4e00-\u9fff]/.test(nameInput.trim())" class="muted">名称含中文且未填自定义分支：默认分支将含中文，如需英文分支请在下方填完整分支名</p>
+      <!-- 名称是必填位置参数（目录名，可中文）；分支两种填法二选一，标题缺省同名称 -->
+      <label>名称 <input v-model="nameInput" autocapitalize="off" spellcheck="false" placeholder="目录名（必填，可中文），如 收银台改版" /></label>
+      <div class="field-row">分支方式
+        <span class="radios">
+          <label class="inline"><input type="radio" value="compose" v-model="branchMode" />前缀组合</label>
+          <label class="inline"><input type="radio" value="full" v-model="branchMode" />完整分支名</label>
+        </span>
+      </div>
+      <template v-if="branchMode === 'compose'">
+        <label>前缀 <input v-model="prefix" autocapitalize="off" spellcheck="false" list="prefix-list" placeholder="英文前缀，如 feature" /></label>
+        <!-- datalist 放 label 外：label 是两列网格，非 none 元素会被当成网格项错位 -->
+        <datalist id="prefix-list"><option v-for="p in PREFIXES" :key="p" :value="p" /></datalist>
+        <label>分支名 <input v-model="branchName" autocapitalize="off" spellcheck="false" placeholder="英文后缀，如 checkout-revamp（留空用名称）" /></label>
+        <p class="muted">分支：{{ composedBranch }}</p>
+      </template>
+      <label v-else>完整分支名 <input v-model="customBranch" autocapitalize="off" spellcheck="false" placeholder="如 feature-20260828-checkout-revamp" /></label>
       <label>标题 <input v-model="title" autocapitalize="off" spellcheck="false" placeholder="中文标题（可选，默认同名称）" /></label>
-      <label>分支前缀
-        <select v-model="prefix">
-          <option value="feature">feature (默认)</option>
-          <option value="bugfix">bugfix</option>
-          <option value="hotfix">hotfix</option>
-          <option value="release">release</option>
-          <option value="support">support</option>
-          <option value="docs">docs</option>
-          <option value="refactor">refactor</option>
-          <option value="test">test</option>
-          <option value="chore">chore</option>
-        </select>
-      </label>
-      <label>自定义分支 <input v-model="customBranch" autocapitalize="off" spellcheck="false" placeholder="完整分支名（可选），如 feature-20260828-test；留空则用前缀-日期-名称" /></label>
       <!-- gws new --from 基线[,基线]...：可多次/逗号分隔，顺序即优先级，主干自动兜底 -->
       <label>基线来源 <input v-model="fromInput" autocapitalize="off" spellcheck="false" placeholder="可选，如 需求A 阶段2（空格/逗号分隔多个，留空=主干）" /></label>
       <fieldset>
@@ -98,7 +101,7 @@ async function create() {
       <p v-if="err" class="err">{{ err }}</p>
       <div class="actions">
         <button :disabled="submitting" @click="emit('close')">取消</button>
-        <button class="primary" :disabled="!(derivedName || nameInput.trim()) || !modules.length || submitting" @click="create">创建</button>
+        <button class="primary" :disabled="!canCreate || submitting" @click="create">创建</button>
       </div>
     </div>
   </div>
@@ -110,7 +113,11 @@ async function create() {
 /* 表单两列对齐（表格样）：标签列固定 5em，输入列各行右缘对齐；
    控件去全局 320px 上限并锁定 32px 高，与相邻输入框完全等高 */
 label { display: grid; grid-template-columns: 5em 1fr; gap: 8px; align-items: center; font-size: 13px; }
-input:not([type="checkbox"]), select { max-width: none; height: var(--control-h); }
+input:not([type="checkbox"]):not([type="radio"]), select { max-width: none; height: var(--control-h); }
+/* 分支方式行与普通 label 同构两列；单选组与行内复选框不受两列网格约束 */
+.field-row { display: grid; grid-template-columns: 5em 1fr; gap: 8px; align-items: center; font-size: 13px; }
+.radios { display: flex; gap: 16px; }
+label.inline { display: flex; align-items: center; gap: 6px; }
 /* 模块勾选列表仍是行内 checkbox 行，不进两列网格 */
 fieldset label { display: flex; align-items: center; gap: 6px; }
 /* 滚动叶子区：contain 防模块列表滚到底后滚动链穿透 */
