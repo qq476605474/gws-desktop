@@ -102,7 +102,7 @@ describe("TopBar hub 路径按钮防误触", () => {
   it("tab 按钮不经 confirm（防误触只针对 hub 切换）", async () => {
     mountTopBar();
     const reposBtn = Array.from(el!.querySelectorAll<HTMLButtonElement>("button"))
-      .find((b) => b.textContent?.trim() === "主干")!;
+      .find((b) => b.textContent?.trim() === "仓库")!;
     reposBtn.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(mocks.confirm).not.toHaveBeenCalled();

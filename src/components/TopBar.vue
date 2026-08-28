@@ -36,7 +36,7 @@ async function switchHub() {
     <button class="hub" :title="hub.path || '选择 Hub'" @click="switchHub">{{ hub.path || "选择 Hub" }} ▾</button>
     <nav>
       <button :class="{ active: tab === 'ws' }" @click="emit('update:tab', 'ws')">需求</button>
-      <button :class="{ active: tab === 'repos' }" @click="emit('update:tab', 'repos')">主干</button>
+      <button :class="{ active: tab === 'repos' }" @click="emit('update:tab', 'repos')">仓库</button>
       <button :class="{ active: tab === 'envs' }" @click="emit('update:tab', 'envs')">环境</button>
       <button :class="{ active: tab === 'docs' }" @click="emit('update:tab', 'docs')">文档</button>
     </nav>

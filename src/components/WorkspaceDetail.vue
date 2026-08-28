@@ -8,6 +8,7 @@ import { parseSt, type StResult } from "../lib/parse";
 import PathActions from "./PathActions.vue";
 import AddModuleDialog from "./AddModuleDialog.vue";
 import SyncMainDialog from "./SyncMainDialog.vue";
+import MergeDialog from "./MergeDialog.vue";
 
 const props = defineProps<{ name: string }>();
 const emit = defineEmits<{ (e: "close"): void }>();
@@ -20,7 +21,7 @@ const stErr = ref("");
 let seq = 0;
 const wsPath = computed(() => `${hub.path}/ws/${props.name}`);
 const showAdd = ref(false);
-const mergeEnv = ref("");
+const mergeMode = ref<"local" | "push" | null>(null);
 const showSyncMain = ref(false);
 
 async function refresh() {
@@ -77,6 +78,20 @@ async function confirmThenDo(label: string, args: string[], question: string, op
     confirming.value = false;
   }
 }
+/** MergeDialog 的 run 回调：先关弹窗再确认执行（模式同 onSyncMain）。
+ *  gws merge 方向为 需求 → 环境分支：local 合到 envs/<env> 本地（不推送），push 合并后直接推送 */
+function onMerge(env: string) {
+  const mode = mergeMode.value!;
+  mergeMode.value = null;
+  const push = mode === "push";
+  confirmThenDo(
+    `gws merge ${env}${push ? " --push" : ""}`,
+    push ? ["merge", env, "--push"] : ["merge", env],
+    push
+      ? `确认把当前需求合并到 ${env} 并推送到远程？`
+      : `确认把当前需求合并到本地环境 ${env}？（不推送）`,
+  );
+}
 /** SyncMainDialog 的 run 回调：先关弹窗再确认执行。sync-main 合并会改写本地分支内容
  *  （变更类操作），--from 可选——留空时 gws 默认取创建时基线（主干） */
 function onSyncMain(from: string) {
@@ -130,12 +145,9 @@ onMounted(refresh);
       <button :disabled="cmd.isRunning()" @click="confirmThenDo('gws pull --rebase', ['pull', '--rebase'], `确认以 rebase 方式拉取远程更新？（本地未推送提交会被变基）`)">Pull --rebase</button>
       <!-- push 写远程：先确认（st 未就绪时分支名回退为“当前分支”） -->
       <button :disabled="cmd.isRunning()" @click="confirmThenDo('gws push', ['push'], `确认推送 ${st?.branch ?? '当前分支'} 到远程？`)">Push</button>
-      <select v-model="mergeEnv">
-        <option value="" disabled>选择环境…</option>
-        <option v-for="e in hub.envs" :key="e" :value="e">{{ e }}</option>
-      </select>
-      <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv}`, ['merge', mergeEnv], `确认把 ${mergeEnv} 合并进当前需求？（本地合并不推送）`)">Merge（本地）</button>
-      <button :disabled="!mergeEnv || cmd.isRunning()" @click="mergeEnv && confirmThenDo(`gws merge ${mergeEnv} --push`, ['merge', mergeEnv, '--push'], `确认合并到 ${mergeEnv} 并推送到远程？`)">Merge+Push</button>
+      <!-- Merge 系列经弹窗选环境（MergeDialog 每次打开实时重取 env ls），选中后仍走 confirm 防误点 -->
+      <button :disabled="cmd.isRunning()" @click="mergeMode = 'local'">Merge（本地）</button>
+      <button :disabled="cmd.isRunning()" @click="mergeMode = 'push'">Merge+Push</button>
       <!-- gws sync 移出工作区（职责在仓库/环境 tab）；sync-main 留此且 --from 可选，经弹窗收集来源 -->
       <button :disabled="cmd.isRunning()" @click="showSyncMain = true">同步最新代码</button>
       <button :disabled="cmd.isRunning()" @click="doCmd('gws done', ['done'])">Done 校验</button>
@@ -165,6 +177,7 @@ onMounted(refresh);
     <p v-else-if="!stErr" class="muted">加载中…</p>
     <AddModuleDialog v-if="showAdd" :ws-path="wsPath" :existing="st ? st.modules.map((m) => m.name) : []" @close="showAdd = false" @added="refresh" />
     <SyncMainDialog v-if="showSyncMain" @close="showSyncMain = false" @run="onSyncMain" />
+    <MergeDialog v-if="mergeMode" :mode="mergeMode" @close="mergeMode = null" @run="onMerge" />
   </div>
 </template>
 
@@ -172,8 +185,6 @@ onMounted(refresh);
 .detail { padding: 4px 0; }
 .head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .ops { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; align-items: center; }
-/* 环境下拉收窄：全局 select 是 100%/320px 输入体系，在按钮行里过宽（环境名短） */
-.ops select { width: auto; max-width: none; flex: 0 0 auto; }
 /* table/th/td 基础样式全局化（base.css） */
 .warn { color: var(--warn-text); font-weight: 600; }
 .error { color: var(--danger-text); font-size: 13px; margin: 0 0 12px; }

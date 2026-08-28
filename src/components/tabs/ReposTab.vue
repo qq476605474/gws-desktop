@@ -46,7 +46,7 @@ async function rm(name: string) {
   // macOS WKWebView 下原生 confirm 恒返回 false，须用插件原生对话框；异常按取消处理
   let ok = false;
   try {
-    ok = await confirm(`移除主干 ${name}？`);
+    ok = await confirm(`移除仓库 ${name}？`);
   } catch {
     return;
   }
@@ -66,7 +66,7 @@ async function rm(name: string) {
   <div>
     <div class="toolbar">
       <input v-model="input" :disabled="cmd.isRunning()" autocapitalize="off" spellcheck="false" placeholder="git 地址（可多个，空格分隔）" style="flex:1" />
-      <button :disabled="!input.trim() || cmd.isRunning() || submitting" @click="addRepos">+ 添加主干</button>
+      <button :disabled="!input.trim() || cmd.isRunning() || submitting" @click="addRepos">+ 添加仓库</button>
       <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">同步最新代码</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
@@ -80,7 +80,7 @@ async function rm(name: string) {
         <button class="btn-sm" :disabled="cmd.isRunning()" @click="rm(r.name)">移除</button>
       </span>
     </div>
-    <p v-if="!hub.repos.length && !hub.error" class="muted">(暂无主干)</p>
+    <p v-if="!hub.repos.length && !hub.error" class="muted">(暂无仓库)</p>
     <p v-if="cmd.current?.label === 'gws repo add' && cmd.current.state !== 'failed'" class="hint">添加后点击「同步最新代码」补建 worktree</p>
   </div>
 </template>

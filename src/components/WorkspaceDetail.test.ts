@@ -276,54 +276,71 @@ describe("WorkspaceDetail 写操作前确认（Pull/Push/Merge 系列统一 conf
     expect(mocks.runGwsStream).not.toHaveBeenCalled();
   });
 
-  it("Merge+Push：confirm 取消 → 不执行；确认 → merge <env> --push", async () => {
+  /** MergeDialog 环境选项按钮（env ls 实时结果渲染） */
+  function envButton(env: string): HTMLButtonElement | undefined {
+    return Array.from(el!.querySelectorAll<HTMLButtonElement>(".envs button"))
+      .find((b) => b.textContent?.trim() === env);
+  }
+
+  /** MergeDialog 提交按钮（未选环境时禁用） */
+  function submitButton(text: string): HTMLButtonElement {
+    const btn = Array.from(el!.querySelectorAll<HTMLButtonElement>(".actions button"))
+      .find((b) => b.textContent?.trim() === text);
+    if (!btn) throw new Error(`按钮「${text}」未找到`);
+    return btn;
+  }
+
+  it("Merge+Push：弹窗实时取 env ls 选环境（未选禁提交），confirm 取消 → 不执行；确认 → merge <env> --push", async () => {
     const { confirm } = await import("@tauri-apps/plugin-dialog");
     vi.mocked(confirm).mockResolvedValue(false);
     await mountReady();
-    const hub = useHubStore();
-    hub.envs = ["dev", "pre"];
-    await nextTick();
-    // 选择环境 pre（select v-model 监听 change）
-    const select = el!.querySelector<HTMLSelectElement>("select")!;
-    select.value = "pre";
-    select.dispatchEvent(new Event("change"));
-    await nextTick();
+    // 环境列表取自弹窗打开时的 env ls 实时结果（hub.envs 快照不再使用）
+    mocks.runGws.mockImplementation(async (args: string[]) =>
+      args[0] === "env" ? { code: 0, output: "  环境分支\n  ○ dev (3 模块)\n  ● pre (3 模块)\n" } : { code: 0, output: "" });
 
     clickText("Merge+Push");
+    await vi.waitFor(() => expect(mocks.runGws).toHaveBeenCalledWith(["env", "ls"], "/hub"));
+    await vi.waitFor(() => expect(envButton("pre")).toBeTruthy());
+    // 未选环境不允许提交
+    expect(submitButton("合并并推送").disabled).toBe(true);
+    envButton("pre")!.click();
+    await nextTick();
+    expect(submitButton("合并并推送").disabled).toBe(false);
+    submitButton("合并并推送").click();
     await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
     expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("pre");
     await new Promise((r) => setTimeout(r, 10));
     expect(mocks.runGwsStream).not.toHaveBeenCalled();
 
+    // confirm 取消后弹窗已关：重开（再次实时取 env ls）→ 选 pre → 确认执行
     vi.mocked(confirm).mockResolvedValue(true);
     clickText("Merge+Push");
+    await vi.waitFor(() => expect(envButton("pre")).toBeTruthy());
+    envButton("pre")!.click();
+    await nextTick();
+    submitButton("合并并推送").click();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["merge", "pre", "--push"], "/hub/ws/demo", 30000),
     );
   });
 
-  it("Merge（本地）：confirm 取消 → 不执行；确认 → 执行 merge <env>（本地合并误点同样危险）", async () => {
+  it("Merge（本地）：弹窗选环境 → confirm → 执行 merge <env>（不推送）", async () => {
     const { confirm } = await import("@tauri-apps/plugin-dialog");
-    vi.mocked(confirm).mockResolvedValue(false);
-    await mountReady();
-    const hub = useHubStore();
-    hub.envs = ["dev"];
-    await nextTick();
-    const select = el!.querySelector<HTMLSelectElement>("select")!;
-    select.value = "dev";
-    select.dispatchEvent(new Event("change"));
-    await nextTick();
-    clickText("Merge（本地）");
-    await vi.waitFor(() => expect(confirm).toHaveBeenCalledTimes(1));
-    expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("dev");
-    await new Promise((r) => setTimeout(r, 10));
-    expect(mocks.runGwsStream).not.toHaveBeenCalled();
-
     vi.mocked(confirm).mockResolvedValue(true);
+    await mountReady();
+    mocks.runGws.mockImplementation(async (args: string[]) =>
+      args[0] === "env" ? { code: 0, output: "  环境分支\n  ○ dev (3 模块)\n" } : { code: 0, output: "" });
+
     clickText("Merge（本地）");
+    await vi.waitFor(() => expect(envButton("dev")).toBeTruthy());
+    expect(submitButton("开始合并").disabled).toBe(true);
+    envButton("dev")!.click();
+    await nextTick();
+    submitButton("开始合并").click();
     await vi.waitFor(() =>
       expect(mocks.runGwsStream).toHaveBeenCalledWith(["merge", "dev"], "/hub/ws/demo", 30000),
     );
+    expect(vi.mocked(confirm).mock.calls[0]![0]).toContain("不推送");
   });
 });
 
