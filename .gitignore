@@ -6,3 +6,6 @@ src-tauri/target/
 src-tauri/gen/
 .qoder/
 dist-windows/
+docs/manual-acceptance.md
+docs/x-turbo/
+gws-repo/

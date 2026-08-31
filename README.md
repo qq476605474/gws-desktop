@@ -23,9 +23,8 @@ src/                  前端
   lib/                gws-bridge（与 Rust 的命令桥）、busy、confirm、toast、ansi、parse
 src-tauri/            Rust 端：gws 子进程编排（run_gws / run_gws_stream / respond_confirm）、
                       事件投递（gws-output:<runId> / gws-exit:<runId> / gws-confirm:<runId>）、
-                      shell 探测（终端候选）；51 个测试（含 tauri::test::mock_app 集成）
-docs/                 manual-acceptance.md：历轮验收与反馈处理记录（含 Windows 交叉编译方案）
-gws-repo/             gws 上游仓库的本地 checkout（用于同步上游修复）
+                      shell 探测（终端候选）；54 个测试（含 tauri::test::mock_app 集成）
+docs/                 manual-acceptance.md 与 x-turbo/ 仅保留在本地（.gitignore，不随仓库发布）
 ```
 
 ## 核心机制（一句话版）
@@ -47,7 +46,7 @@ npm run tauri dev        # 开发（Vite devServer :1420）
 
 ```bash
 npx vitest run           # 前端：232 用例 / 23 文件
-cargo test --manifest-path src-tauri/Cargo.toml   # Rust：51 用例
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust：54 用例
 npm run build            # vue-tsc 类型检查 + vite 产物
 ```
 
@@ -64,7 +63,7 @@ npm run tauri build
 
 **Windows x64（从 ARM64 虚拟机交叉编译）**
 
-`bundle.targets` 含 `nsis`。macOS 上无法直接产 Windows 包；我们的做法是在 Windows 11 ARM64 虚拟机里：宿主用 `stable-aarch64-pc-windows-gnullvm`（自带 CRT 可链接宿主侧 build script），目标仍 `x86_64-pc-windows-msvc`（用 MSVC 的 Hostarm64→x64 link.exe），另需补 sysroot 导入库与自写 `windres` 壳。完整步骤、坑与脚本见 [`docs/manual-acceptance.md` 第十五节](docs/manual-acceptance.md)。
+`bundle.targets` 含 `nsis`。macOS 上无法直接产 Windows 包；我们的做法是在 Windows 11 ARM64 虚拟机里：宿主用 `stable-aarch64-pc-windows-gnullvm`（自带 CRT 可链接宿主侧 build script），目标仍 `x86_64-pc-windows-msvc`（用 MSVC 的 Hostarm64→x64 link.exe），另需补 sysroot 导入库与自写 `windres` 壳。
 
 ```
 → target/x86_64-pc-windows-msvc/release/bundle/nsis/GwsDesk_0.1.0_x64-setup.exe
@@ -74,5 +73,5 @@ npm run tauri build
 
 ## 约定与记录
 
-- 界面文案与文档均为中文；验收与反馈处理全部记录在 `docs/manual-acceptance.md`（逐轮表格，含提交号），新功能请同步更新。
+- 界面文案与文档均为中文；验收与反馈处理记录（`docs/manual-acceptance.md`）仅保存在本地仓库，不随开源仓库发布。
 - commit 信息风格参考 `git log`（中文，`feat:` / `fix:` 前缀）。
