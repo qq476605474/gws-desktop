@@ -112,6 +112,12 @@ pub fn open_path(path: String) -> Result<(), String> {
         // start 是 cmd 内建而非可执行文件，须经 cmd /C；空 "" 是 start 的窗口标题占位，
         // 否则带引号的路径首段会被当成标题吞掉
         let mut c = Command::new("cmd");
+        #[cfg(windows)]
+        {
+            // cmd.exe 是控制台程序：拉起资源管理器前会闪黑窗，用 CREATE_NO_WINDOW 抑制
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x0800_0000);
+        }
         c.args(["/C", "start", ""]);
         c
     } else {
@@ -323,7 +329,14 @@ pub fn list_dir(path: String) -> Result<Vec<String>, String> {
 #[tauri::command(async)]
 pub fn latest_gws_version() -> Result<String, String> {
     let url = std::env::var("GWS_UPDATE_URL").unwrap_or_else(|_| DEFAULT_GWS_UPDATE_URL.to_string());
-    let output = Command::new("curl")
+    let mut cmd = Command::new("curl");
+    #[cfg(windows)]
+    {
+        // curl 是控制台程序：GUI 进程拉它会闪黑窗，用 CREATE_NO_WINDOW 抑制
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    let output = cmd
         .args(["-fsSL", "--connect-timeout", "10", "--max-time", "60", "--"])
         .arg(&url)
         .output()

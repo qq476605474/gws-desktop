@@ -270,6 +270,13 @@ impl GwsLaunch {
     pub fn command(&self, args: &[String], cwd: &Path) -> Command {
         let mut cmd = Command::new(&self.program);
         cmd.args(self.prefix_args.iter()).args(args).current_dir(cwd);
+        #[cfg(windows)]
+        {
+            // GUI 进程拉起控制台程序（bash.exe / cmd.exe）时，Windows 默认弹一个
+            // 黑控制台窗口——CREATE_NO_WINDOW 抑制它；std 会自动补 CREATE_UNICODE_ENVIRONMENT
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x0800_0000);
+        }
         if !self.path_append.is_empty() {
             if let Some(cur) = std::env::var_os("PATH") {
                 let mut paths: Vec<PathBuf> = std::env::split_paths(&cur).collect();
