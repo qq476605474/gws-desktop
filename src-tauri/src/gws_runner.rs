@@ -8,7 +8,14 @@ use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Runtime};
 
-const GWS_INSTALL_HINT: &str = "gws 未安装。安装: curl -fsSL https://raw.githubusercontent.com/qq476605474/gws/main/gws -o ~/.local/bin/gws && chmod +x ~/.local/bin/gws";
+const GWS_INSTALL_HINT: &str = if cfg!(windows) {
+    "gws 未安装。gws 是 bash 脚本：请先安装 Git for Windows（自带 Git Bash），\
+     在「开始菜单 → Git → Git Bash」里执行：\
+     curl -fsSL https://raw.githubusercontent.com/qq476605474/gws/main/gws -o ~/.local/bin/gws，\
+     并把 %USERPROFILE%\\.local\\bin 加入用户 PATH。本客户端会自动借助 Git 的 bash 解释执行"
+} else {
+    "gws 未安装。安装: curl -fsSL https://raw.githubusercontent.com/qq476605474/gws/main/gws -o ~/.local/bin/gws && chmod +x ~/.local/bin/gws"
+};
 
 const CONFIRM_SILENCE: Duration = Duration::from_millis(1500);
 const WATCHDOG_INTERVAL: Duration = Duration::from_millis(250);
@@ -239,9 +246,50 @@ fn flush_carry(carry: &mut Vec<u8>) -> String {
     rest
 }
 
+/// gws 的启动形态：program 加 prefix_args 再接业务参数，可附带要补进 PATH 的目录。
+/// unix：program=gws 脚本本体，prefix 为空；
+/// Windows：原生可执行（gws.exe）prefix 为空；.cmd/.bat 须经 `cmd /C` 转发；
+/// 无扩展名脚本是 bash 脚本 → program=bash.exe、prefix=[脚本路径]，
+/// 并把 Git 的 usr/bin 等补进 PATH——GUI 进程的系统 PATH 不含这些目录，
+/// 脚本里的 mktemp/basename 等 coreutils 会找不到（--noprofile 不执行 /etc/profile）。
+#[derive(Debug, Clone)]
+pub struct GwsLaunch {
+    pub program: PathBuf,
+    pub prefix_args: Vec<String>,
+    pub path_append: Vec<PathBuf>,
+}
+
+impl GwsLaunch {
+    /// 直接执行 program（无前缀参数、无 PATH 追加）：集成测试构造 mock 启动形态也用它。
+    pub fn direct(program: PathBuf) -> Self {
+        Self { program, prefix_args: Vec::new(), path_append: Vec::new() }
+    }
+
+    /// 组装进程：program + prefix_args + args，已设工作目录；调用方自管 stdio。
+    /// path_append 只追加不前置：用户 PATH 里已有的工具（自装 git 等）优先级不变。
+    pub fn command(&self, args: &[String], cwd: &Path) -> Command {
+        let mut cmd = Command::new(&self.program);
+        cmd.args(self.prefix_args.iter()).args(args).current_dir(cwd);
+        if !self.path_append.is_empty() {
+            if let Some(cur) = std::env::var_os("PATH") {
+                let mut paths: Vec<PathBuf> = std::env::split_paths(&cur).collect();
+                for p in &self.path_append {
+                    if !paths.contains(p) {
+                        paths.push(p.clone());
+                    }
+                }
+                if let Ok(joined) = std::env::join_paths(paths) {
+                    cmd.env("PATH", joined);
+                }
+            }
+        }
+        cmd
+    }
+}
+
 /// 同步一次性执行，stdout 在前、stderr 追加换行后拼接。
-pub fn run_gws_once(exe: &Path, args: &[String], cwd: &Path) -> RunResult {
-    match Command::new(exe).args(args).current_dir(cwd).stdin(Stdio::null()).output() {
+pub fn run_gws_once(launch: &GwsLaunch, args: &[String], cwd: &Path) -> RunResult {
+    match launch.command(args, cwd).stdin(Stdio::null()).output() {
         Ok(out) => {
             let mut output = String::from_utf8_lossy(&out.stdout).to_string();
             let stderr = String::from_utf8_lossy(&out.stderr).to_string();
@@ -257,35 +305,143 @@ pub fn run_gws_once(exe: &Path, args: &[String], cwd: &Path) -> RunResult {
     }
 }
 
-pub fn find_gws() -> Option<PathBuf> {
-    let name = if cfg!(windows) { "gws.exe" } else { "gws" };
-    // GUI 从 Finder/Dock 启动不继承交互 shell 的 PATH（.zshrc 等未加载），
-    // ~/.local/bin 这类用户安装位常不在其中——先查 PATH，再按常见安装位兜底
-    if let Some(path) = std::env::var_os("PATH") {
-        if let Some(found) = std::env::split_paths(&path)
-            .map(|dir| dir.join(name))
-            .find(|candidate| candidate.is_file())
-        {
-            return Some(found);
+/// 文件是否以 shebang 开头：Windows 上无扩展名文件不能直接执行，
+/// 凭此判定它是需要解释器的脚本（而非被改名放错位置的 exe）。
+fn has_shebang(path: &Path) -> bool {
+    std::fs::File::open(path)
+        .and_then(|mut f| {
+            let mut head = [0u8; 2];
+            f.read_exact(&mut head).map(|_| head == *b"#!")
+        })
+        .unwrap_or(false)
+}
+
+/// 用户主目录：unix 用 HOME；Windows 上 GUI 进程常无 HOME，取 USERPROFILE。
+fn home_dir() -> Option<PathBuf> {
+    if cfg!(windows) {
+        std::env::var_os("USERPROFILE")
+            .or_else(|| std::env::var_os("HOME"))
+            .map(PathBuf::from)
+    } else {
+        std::env::var_os("HOME").map(PathBuf::from)
+    }
+}
+
+/// 找 Git for Windows 的 bash.exe（WSL 的 bash 别名不在此列：路径含 Windows 且必须是 exe）。
+/// 固定安装位优先于 PATH：PATH 里的 "bash" 可能是别的发行版/残留，官方安装位语义确定。
+fn find_windows_bash() -> Option<PathBuf> {
+    for dir in ["C:\\Program Files\\Git\\bin", "C:\\Program Files\\Git\\usr\\bin"] {
+        let candidate = PathBuf::from(dir).join("bash.exe");
+        if candidate.is_file() {
+            return Some(candidate);
         }
     }
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    [
-        home.join(".local/bin"),
-        home.join("bin"),
-        PathBuf::from("/usr/local/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-    ]
-    .into_iter()
-    .map(|dir| dir.join(name))
-    .find(|candidate| candidate.is_file())
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join("bash.exe"))
+            .find(|c| c.is_file() && c.to_string_lossy().to_lowercase().contains("windows"))
+    })
+}
+
+/// 由 bash.exe 反推 Git 安装根目录：bin（或 usr\bin）逐级向上找同时含
+/// usr\bin 与 mingw64 的目录——不依赖固定盘符/安装位置（用户可装在 D 盘等）。
+fn git_root_from_bash(bash: &Path) -> Option<PathBuf> {
+    let mut dir = bash.parent()?;
+    loop {
+        if dir.join("usr").join("bin").is_dir() && dir.join("mingw64").is_dir() {
+            return Some(dir.to_path_buf());
+        }
+        dir = dir.parent()?;
+    }
+}
+
+/// 定位 gws 及其启动方式。
+///
+/// unix：PATH + 常见安装位找可执行的 `gws`，直接运行。
+/// Windows 依次尝试：
+///   1. `gws.exe`（PATH → %USERPROFILE%\.local\bin → %USERPROFILE%\bin）——直接执行；
+///   2. `gws.cmd` / `gws.bat` —— 经 `cmd /C` 转发（Rust 不允许直接 spawn .bat/.cmd）；
+///   3. 无扩展名 `gws`（curl 官方安装法的产物，bash 脚本）——找 Git 的 bash.exe 解释执行。
+/// GUI 从 Dock/开始菜单启动不继承交互 shell 的 PATH（.zshrc 等未加载），
+/// ~/.local/bin 这类用户安装位常不在其中——故 PATH 之外再按常见安装位兜底。
+pub fn find_gws() -> Option<GwsLaunch> {
+    if cfg!(windows) {
+        return find_gws_windows();
+    }
+    let home = home_dir()?;
+    let dirs: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+        .chain([
+            home.join(".local/bin"),
+            home.join("bin"),
+            PathBuf::from("/usr/local/bin"),
+            PathBuf::from("/opt/homebrew/bin"),
+        ])
+        .collect();
+    dirs.iter().map(|d| d.join("gws")).find(|c| c.is_file()).map(GwsLaunch::direct)
+}
+
+#[cfg(windows)]
+fn find_gws_windows() -> Option<GwsLaunch> {
+    let home = home_dir()?;
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).collect();
+    dirs.push(home.join(".local").join("bin"));
+    dirs.push(home.join("bin"));
+    for dir in &dirs {
+        // 原生可执行优先：用户自备的 gws.exe 不被脚本版盖过
+        let exe = dir.join("gws.exe");
+        if exe.is_file() {
+            return Some(GwsLaunch::direct(exe));
+        }
+        for ext in ["cmd", "bat"] {
+            let f = dir.join(format!("gws.{ext}"));
+            if f.is_file() {
+                // Rust ≥1.58 禁止直接 spawn .bat/.cmd（防参数注入），须走 cmd /C
+                return Some(GwsLaunch {
+                    program: PathBuf::from("cmd"),
+                    prefix_args: vec!["/C".into(), f.to_string_lossy().into_owned()],
+                    path_append: Vec::new(),
+                });
+            }
+        }
+        let script = dir.join("gws");
+        if script.is_file() && has_shebang(&script) {
+            let bash = find_windows_bash()?;
+            let root = git_root_from_bash(&bash);
+            let mut path_append = Vec::new();
+            if let Some(root) = &root {
+                for sub in ["usr\\bin", "mingw64\\bin", "cmd"] {
+                    let p = root.join(sub);
+                    if p.is_dir() {
+                        path_append.push(p);
+                    }
+                }
+            }
+            return Some(GwsLaunch {
+                program: bash,
+                // --noprofile --norc：不读 Git Bash 的 profile（GUI 进程的 PATH 是
+                // 系统/用户 PATH，profile 改写反而引入 /usr/bin 风格的 unix 路径）
+                prefix_args: vec![
+                    "--noprofile".into(),
+                    "--norc".into(),
+                    script.to_string_lossy().into_owned(),
+                ],
+                path_append,
+            });
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn find_gws_windows() -> Option<GwsLaunch> {
+    None
 }
 
 /// (async)：阻塞至子进程退出，须在主线程外执行（sync fn + async 标记 → 线程池）。
 #[tauri::command(async)]
 pub fn run_gws(args: Vec<String>, cwd: String) -> Result<RunResult, String> {
-    let exe = find_gws().ok_or_else(|| GWS_INSTALL_HINT.to_string())?;
-    Ok(run_gws_once(&exe, &args, Path::new(&cwd)))
+    let launch = find_gws().ok_or_else(|| GWS_INSTALL_HINT.to_string())?;
+    Ok(run_gws_once(&launch, &args, Path::new(&cwd)))
 }
 
 /// 泛型 Runtime：生产走 Wry，集成测试可用 mock runtime 的 AppHandle 直调。
@@ -299,24 +455,23 @@ pub fn run_gws_stream<R: Runtime>(
     cwd: String,
     confirm_timeout_ms: Option<u64>,
 ) -> Result<u32, String> {
-    let exe = find_gws().ok_or_else(|| GWS_INSTALL_HINT.to_string())?;
-    spawn_stream(&app, &exe, &args, &cwd, confirm_timeout_ms)
+    let launch = find_gws().ok_or_else(|| GWS_INSTALL_HINT.to_string())?;
+    spawn_stream(&app, &launch, &args, &cwd, confirm_timeout_ms)
 }
 
 /// spawn + 事件编排。与命令入口拆开：集成测试直接传 mock 可执行文件路径，
 /// 不必篡改进程级 PATH（会与并行测试相互干扰）。
 pub fn spawn_stream<R: Runtime>(
     app: &AppHandle<R>,
-    exe: &Path,
+    launch: &GwsLaunch,
     args: &[String],
     cwd: &str,
     confirm_timeout_ms: Option<u64>,
 ) -> Result<u32, String> {
-    // 各后台线程要求 'static：入口处克隆出所有权句柄（exe/cwd 是函数体内消费掉的借用）
+    // 各后台线程要求 'static：入口处克隆出所有权句柄（launch/cwd 是函数体内消费掉的借用）
     let app = app.clone();
-    let mut child = Command::new(exe)
-        .args(args)
-        .current_dir(cwd)
+    let mut child = launch
+        .command(args, Path::new(cwd))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -604,5 +759,80 @@ mod tests {
         out.push_str(&flush_carry(&mut carry));
         assert_eq!(out, s);
         assert!(!out.contains('\u{FFFD}'), "不应出现替换字符");
+    }
+
+    #[test]
+    fn has_shebang_only_for_script_files() {
+        let dir = std::env::temp_dir().join(format!("gws_shebang_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("gws");
+        std::fs::write(&script, "#!/usr/bin/env bash\n").unwrap();
+        assert!(has_shebang(&script));
+        let binary = dir.join("gws.bin");
+        std::fs::write(&binary, b"MZ\x90\x00").unwrap();
+        assert!(!has_shebang(&binary));
+        assert!(!has_shebang(&dir.join("missing")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn git_root_from_bash_walks_up_both_layouts() {
+        let dir = std::env::temp_dir().join(format!("gws_gitroot_test_{}", std::process::id()));
+        let root = dir.join("Git");
+        for sub in ["bin", "usr/bin", "mingw64", "cmd"] {
+            std::fs::create_dir_all(root.join(sub)).unwrap();
+        }
+        let bash_bin = root.join("bin").join("bash.exe");
+        std::fs::write(&bash_bin, b"").unwrap();
+        assert_eq!(git_root_from_bash(&bash_bin), Some(root.clone()));
+        // usr\bin\bash.exe 布局：多一层向上也能找到
+        let bash_usr = root.join("usr").join("bin").join("bash.exe");
+        std::fs::write(&bash_usr, b"").unwrap();
+        assert_eq!(git_root_from_bash(&bash_usr), Some(root.clone()));
+        // 不含 usr/bin + mingw64 的目录树：向上走到根也不会误判
+        let stray = dir.join("stray").join("bash.exe");
+        std::fs::create_dir_all(stray.parent().unwrap()).unwrap();
+        std::fs::write(&stray, b"").unwrap();
+        assert_eq!(git_root_from_bash(&stray), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn command_assembles_program_prefix_args_and_path() {
+        let launch = GwsLaunch {
+            program: PathBuf::from("bash.exe"),
+            prefix_args: vec!["--noprofile".into(), "--norc".into(), "C:/gws".into()],
+            // path_append 须用无盘符冒号的路径：unix 的列表分隔符就是 `:`，
+            // 带 `C:` 的假路径在 macOS 上会被 join_paths 拒绝（Windows 真实路径无此问题）
+            path_append: vec![PathBuf::from("/opt/git/usr/bin"), PathBuf::from("/opt/git/mingw64/bin")],
+        };
+        let args = vec!["sync".to_string(), "dev".to_string()];
+        let cmd = launch.command(&args, Path::new("C:/hub"));
+        assert_eq!(cmd.get_program(), "bash.exe");
+        assert_eq!(
+            cmd.get_args().collect::<Vec<_>>(),
+            ["--noprofile", "--norc", "C:/gws", "sync", "dev"]
+        );
+        assert_eq!(cmd.get_current_dir(), Some(Path::new("C:/hub").as_ref()));
+        // PATH 只追加不清空：原有条目仍在，追加目录在尾部
+        let path_val = cmd
+            .get_envs()
+            .find(|(k, _)| *k == std::ffi::OsStr::new("PATH"))
+            .and_then(|(_, v)| v)
+            .expect("path_append 非空时应设置 PATH");
+        let paths: Vec<PathBuf> = std::env::split_paths(path_val).collect();
+        assert!(
+            paths.contains(&PathBuf::from("/opt/git/usr/bin")),
+            "追加目录应在 PATH 中: {path_val:?}"
+        );
+        let last = paths.last().unwrap();
+        assert_eq!(*last, PathBuf::from("/opt/git/mingw64/bin"), "追加目录应在 PATH 尾部");
+        // 空追加目录不应碰 PATH
+        let plain = GwsLaunch::direct(PathBuf::from("gws"));
+        let cmd2 = plain.command(&args, Path::new("C:/hub"));
+        assert!(
+            cmd2.get_envs().all(|(k, _)| k != std::ffi::OsStr::new("PATH")),
+            "无追加目录时不应显式设置 PATH"
+        );
     }
 }

@@ -10,7 +10,7 @@ use std::os::unix::fs::PermissionsExt;
 
 use gws_desk_lib::gws_runner::{
     cleanup_if_done, find_gws, lock_runs, replay_output, respond_confirm, run_gws_once,
-    spawn_stream, PendingEvent, RunShared,
+    spawn_stream, GwsLaunch, PendingEvent, RunShared,
 };
 use tauri::{AppHandle, Emitter, Listener, Manager, Runtime};
 
@@ -93,7 +93,7 @@ fn attach<R: Runtime>(handle: &AppHandle<R>, run_id: u32) -> Arc<Mutex<EventLog>
 fn run_once_captures_output_and_code() {
     let dir = temp_dir("run_once_capture");
     let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\necho hello\necho err >&2\nexit 3\n");
-    let res = run_gws_once(&exe, &[], &dir);
+    let res = run_gws_once(&GwsLaunch::direct(exe), &[], &dir);
     assert_eq!(res.code, Some(3));
     assert!(res.output.contains("hello"));
     assert!(res.output.contains("err"));
@@ -108,7 +108,7 @@ fn run_once_passes_args_and_cwd() {
     let dir = temp_dir("run_once_args");
     let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\necho \"cwd=$(pwd -P) args=$*\"\n");
     let args: Vec<String> = vec!["a".into(), "b".into()];
-    let res = run_gws_once(&exe, &args, &dir);
+    let res = run_gws_once(&GwsLaunch::direct(exe), &args, &dir);
     assert_eq!(res.code, Some(0));
     assert!(res.output.contains("args=a b"), "output: {}", res.output);
     let canonical = fs::canonicalize(&dir).unwrap();
@@ -125,9 +125,9 @@ fn run_once_passes_args_and_cwd() {
 fn find_gws_returns_path_or_none_without_panicking() {
     // 不篡改进程级 PATH（与并行测试相互干扰）：只验证真实环境下查找不 panic、类型正确。
     // PATH 解析的命中逻辑由 spawn_stream 的 e2e 用显式 exe 路径覆盖。
-    let found: Option<PathBuf> = find_gws();
-    if let Some(path) = &found {
-        assert!(path.is_file(), "find_gws 返回的应是文件: {}", path.display());
+    let found = find_gws();
+    if let Some(launch) = &found {
+        assert!(launch.program.is_file(), "find_gws 返回的应是文件: {}", launch.program.display());
     }
 }
 
@@ -266,7 +266,7 @@ fn stream_e2e_output_exit_replay() {
 
     // run_gws_stream 契约：spawn + 编排完成后立即返回 runId，不等进程退出
     let started = Instant::now();
-    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), None).unwrap();
+    let run_id = spawn_stream(handle, &GwsLaunch::direct(exe), &[], dir.to_str().unwrap(), None).unwrap();
     assert!(
         started.elapsed() < Duration::from_millis(500),
         "run_gws_stream 应立即返回，实际耗时 {:?}",
@@ -301,7 +301,7 @@ fn stream_e2e_confirm_kill() {
     // read 是 bash 内建：阻塞等 stdin，无 stdout 输出 → 触发 watchdog 确认
     let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nread line\necho \"got:$line\"\n");
 
-    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), None).unwrap();
+    let run_id = spawn_stream(handle, &GwsLaunch::direct(exe), &[], dir.to_str().unwrap(), None).unwrap();
     let log = attach(handle, run_id);
     replay_output(handle.clone(), run_id).unwrap();
 
@@ -335,7 +335,7 @@ fn stream_e2e_long_custom_timeout_no_false_confirm() {
     let dir = temp_dir("e2e_timeout_long");
     let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nsleep 1.8\necho done\n");
 
-    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), Some(5000)).unwrap();
+    let run_id = spawn_stream(handle, &GwsLaunch::direct(exe), &[], dir.to_str().unwrap(), Some(5000)).unwrap();
     let log = attach(handle, run_id);
     replay_output(handle.clone(), run_id).unwrap();
 
@@ -366,7 +366,7 @@ fn stream_e2e_short_custom_timeout_fires_confirm() {
     // sleep 1s：静默期跨越 watchdog 首次轮询（250ms），保证 confirm 先于退出确定性发出
     let exe = write_mock(&dir, "mock.sh", "#!/bin/bash\nsleep 1\necho done\n");
 
-    let run_id = spawn_stream(handle, &exe, &[], dir.to_str().unwrap(), Some(100)).unwrap();
+    let run_id = spawn_stream(handle, &GwsLaunch::direct(exe), &[], dir.to_str().unwrap(), Some(100)).unwrap();
     let log = attach(handle, run_id);
     replay_output(handle.clone(), run_id).unwrap();
 
