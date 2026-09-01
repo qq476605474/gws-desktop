@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { HUB_ROOT } from "../lib/consts";
 import { useHubStore } from "../stores/hub";
 import { useCmdStore } from "../stores/cmd";
+import { joinPath } from "../lib/path";
 
 const emit = defineEmits<{ (e: "close"): void }>();
 const hub = useHubStore();
@@ -14,7 +15,7 @@ const input = ref("");
 const err = ref("");
 const submitting = ref(false);
 /** doc new 的 cwd：根文档在 hub 根跑（gws 无工作区上下文时落 docs/ 第一层），需求在 ws/<名> */
-const cwd = () => (dest.value === HUB_ROOT ? hub.path : `${hub.path}/ws/${dest.value}`);
+const cwd = () => (dest.value === HUB_ROOT ? hub.path : joinPath(hub.path, "ws", dest.value));
 
 async function create() {
   if (submitting.value) return; // 防双击：exec 的 IPC 往返间隙 isRunning 尚未生效

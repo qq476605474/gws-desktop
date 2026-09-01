@@ -6,6 +6,7 @@ import { useSettingsStore } from "../stores/settings";
 import { useHubStore } from "../stores/hub";
 import { useCmdStore } from "../stores/cmd";
 import { checkGwsInstalled, hubExists } from "../lib/gws-bridge";
+import { joinPath } from "../lib/path";
 
 const settings = useSettingsStore();
 const hub = useHubStore();
@@ -31,7 +32,7 @@ async function openHub() {
     return;
   }
   hub.setHub(hubPath.value);
-  settings.lastHub = hubPath.value;
+  settings.lastHub = hub.path; // setHub 已规范化：存干净的，别存手输的混合分隔符
   navigate("main");
 }
 onMounted(async () => {
@@ -50,15 +51,12 @@ async function pickInitParent() {
     // 选择器异常（极罕见）按取消处理
   }
 }
-/** 新建 hub 的完整目标路径：父目录 + 新目录名（末尾斜杠容错）。
- *  分隔符跟随父目录风格：Windows 反斜杠路径不能再拼 /（混合分隔符会让
- *  explorer 打不开、回退"文档"），统一用父目录自身用的那一种。 */
+/** 新建 hub 的完整目标路径：父目录 + 新目录名。joinPath 分隔符跟随父目录风格
+ *  （Windows 反斜杠路径不能再拼 /）。 */
 function initTarget(): string {
-  const parent = initParent.value.trim().replace(/[\\/]+$/, "");
+  const parent = initParent.value.trim();
   const name = initName.value.trim();
-  if (!name || !parent) return name && !parent ? name : "";
-  const sep = parent.includes("\\") ? "\\" : "/";
-  return `${parent}${sep}${name}`;
+  return parent && name ? joinPath(parent, name) : "";
 }
 async function initHub() {
   const target = initTarget();
@@ -72,7 +70,7 @@ async function initHub() {
     await cmd.waitDone(run);
     if (run.state !== "done") return;
     hub.setHub(target);
-    settings.lastHub = target;
+    settings.lastHub = hub.path;
     showInit.value = false;
     navigate("main"); // 新 hub 直达主界面（各 Tab 对空 hub 自然显示空态）
   } catch (e) {

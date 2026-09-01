@@ -4,6 +4,7 @@ import { confirmBox } from "../lib/confirm";
 import { useHubStore } from "../stores/hub";
 import { useCmdStore, type ExecOpts } from "../stores/cmd";
 import { runGws } from "../lib/gws-bridge";
+import { joinPath } from "../lib/path";
 import { parseSt, type StResult } from "../lib/parse";
 import PathActions from "./PathActions.vue";
 import AddModuleDialog from "./AddModuleDialog.vue";
@@ -19,7 +20,7 @@ const stErr = ref("");
 // 并发守卫：refresh 可能重叠（重试按钮、命令结束刷新等），只接受最新一次的结果，
 // 防止旧响应迟到覆盖新数据（如 doCmd 后手动重试）
 let seq = 0;
-const wsPath = computed(() => `${hub.path}/ws/${props.name}`);
+const wsPath = computed(() => joinPath(hub.path, "ws", props.name));
 const showAdd = ref(false);
 const mergeMode = ref<"local" | "push" | null>(null);
 const showSyncMain = ref(false);
@@ -162,7 +163,7 @@ onMounted(refresh);
       <thead><tr><th>模块</th><th>分支</th><th>改动</th><th>vs远程</th><th>vs主干</th><th>操作</th></tr></thead>
       <tbody>
         <tr v-for="m in st.modules" :key="m.name">
-          <td>{{ m.name }} <PathActions :path="`${wsPath}/${m.name}`" /></td>
+          <td>{{ m.name }} <PathActions :path="joinPath(wsPath, m.name)" /></td>
           <td><code>{{ st.branch }}</code></td>
           <td :class="{ warn: (m.dirty ?? 0) > 0 }">{{ m.missing ? "目录缺失" : m.dirty }}</td>
           <td>{{ m.pushed === false ? "未推送" : `↑${m.ahead ?? 0} ↓${m.behind ?? 0}` }}</td>

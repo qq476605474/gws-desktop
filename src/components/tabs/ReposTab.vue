@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { confirmBox } from "../../lib/confirm";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
+import { joinPath } from "../../lib/path";
 import PathActions from "../PathActions.vue";
 import AddRepoDialog from "../AddRepoDialog.vue";
 
@@ -59,13 +60,13 @@ async function rm(name: string) {
       <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">同步最新代码</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
-    <div class="group-row">📁 repos <code>{{ hub.path }}/repos</code> <PathActions :path="`${hub.path}/repos`" /></div>
+    <div class="group-row">📁 repos <code>{{ joinPath(hub.path, "repos") }}</code> <PathActions :path="joinPath(hub.path, 'repos')" /></div>
     <div v-for="r in hub.repos" :key="r.name" class="repo-row">
       <div>
         <strong>{{ r.name }}</strong> <span class="muted">主干 {{ r.mainBranch }}</span>
       </div>
       <span>
-        <PathActions :path="`${hub.path}/repos/${r.name}`" />
+        <PathActions :path="joinPath(hub.path, 'repos', r.name)" />
         <button class="btn-sm" :disabled="cmd.isRunning()" @click="rm(r.name)">移除</button>
       </span>
     </div>

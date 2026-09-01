@@ -2,6 +2,7 @@
 import { onMounted, ref } from "vue";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
+import { joinPath } from "../../lib/path";
 import PathActions from "../PathActions.vue";
 import NewWorkspaceDialog from "../NewWorkspaceDialog.vue";
 import GetWorkspaceDialog from "../GetWorkspaceDialog.vue";
@@ -33,7 +34,7 @@ onMounted(() => hub.refreshAll());
         <span v-if="ws.title && ws.name !== ws.title" class="muted">{{ ws.title }}</span>
         <code class="branch">{{ ws.branch }}</code>
       </div>
-      <PathActions :path="`${hub.path}/ws/${ws.name}`" />
+      <PathActions :path="joinPath(hub.path, 'ws', ws.name)" />
     </div>
     <p v-if="!hub.workspaces.length && !hub.error" class="muted">(暂无需求)</p>
   </template>

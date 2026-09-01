@@ -1,6 +1,7 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
 import { runGws } from "../lib/gws-bridge";
+import { normalizePath } from "../lib/path";
 import { parseLs, parseRepoLs, parseEnvLs, type WsEntry, type RepoEntry } from "../lib/parse";
 
 export const useHubStore = defineStore("hub", () => {
@@ -11,7 +12,9 @@ export const useHubStore = defineStore("hub", () => {
   const error = ref("");
 
   function setHub(p: string) {
-    path.value = p;
+    // hub 路径唯一入口（lastHub 回放/手输/新建）：进来先规范化，
+    // 混合分隔符（C:\a\/b）在显示、复制、拼接处都会别扭，源头一次清掉
+    path.value = normalizePath(p);
     workspaces.value = [];
     repos.value = [];
     envs.value = [];

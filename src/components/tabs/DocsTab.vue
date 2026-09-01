@@ -12,6 +12,7 @@ import { useCmdStore } from "../../stores/cmd";
 import { runGws, openPath, copyText } from "../../lib/gws-bridge";
 import { toast } from "../../lib/toast";
 import { stripAnsi } from "../../lib/ansi";
+import { joinPath } from "../../lib/path";
 import { parseDocDir, parseDocLs, parseLs, type DocEntry } from "../../lib/parse";
 import PathActions from "../PathActions.vue";
 import AddDocDialog from "../AddDocDialog.vue";
@@ -32,13 +33,15 @@ const isHubData = computed(() => docsWs.value === HUB_ROOT);
 /** 文档目录（目录级访达/终端/复制的落点）：ws 模式 docs/<docdir>，hub 模式 docs/。
  *  空串 = 无数据归属（未加载/无工作区），目录行不渲染 */
 const dirPath = computed(() => {
-  if (isHubData.value) return `${hub.path}/docs`;
-  return docDir.value ? `${hub.path}/docs/${docDir.value}` : "";
+  if (isHubData.value) return joinPath(hub.path, "docs");
+  return docDir.value ? joinPath(hub.path, "docs", docDir.value) : "";
 });
 const dirRel = computed(() => (isHubData.value ? "docs" : `docs/${docDir.value}`));
 /** 文件全路径：hub 根文档在 docs/ 第一层，工作区文档在 docs/<docdir>/ 下 */
 function filePath(file: string) {
-  return isHubData.value ? `${hub.path}/docs/${file}` : `${hub.path}/docs/${docDir.value}/${file}`;
+  return isHubData.value
+    ? joinPath(hub.path, "docs", file)
+    : joinPath(hub.path, "docs", docDir.value, file);
 }
 // 并发守卫：refresh 可能重叠（切换工作区、命令结束刷新、重试），只接受最新一次的结果，
 // 防止旧响应迟到覆盖新数据（模式同 WorkspaceDetail.refresh）
@@ -67,7 +70,7 @@ async function refresh() {
     if (target !== HUB_ROOT && !wss.some((w) => w.name === target)) target = HUB_ROOT;
     wsFilter.value = target;
     // hub 模式在 hub 根跑 doc ls：gws 无工作区上下文时退化为列 docs/ 第一层（hub 级文档）
-    const cwd = target === HUB_ROOT ? hub.path : `${hub.path}/ws/${target}`;
+    const cwd = target === HUB_ROOT ? hub.path : joinPath(hub.path, "ws", target);
     const r = await runGws(["doc", "ls"], cwd);
     if (n !== seq) return; // 旧请求迟到：丢弃本次结果
     if (r.code === null || r.code !== 0) {

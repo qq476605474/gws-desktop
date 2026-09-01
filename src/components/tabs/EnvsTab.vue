@@ -4,6 +4,7 @@ import { confirmBox } from "../../lib/confirm";
 import { useHubStore } from "../../stores/hub";
 import { useCmdStore } from "../../stores/cmd";
 import { listDir } from "../../lib/gws-bridge";
+import { joinPath } from "../../lib/path";
 import PathActions from "../PathActions.vue";
 import AddEnvDialog from "../AddEnvDialog.vue";
 
@@ -32,7 +33,7 @@ async function load(e: string) {
   // 否则旧请求会写进新槽（覆盖新数据）或对已删槽赋值抛 TypeError
   const slot = modules.value[e]!;
   try {
-    slot.list = await listDir(`${hub.path}/envs/${e}`);
+    slot.list = await listDir(joinPath(hub.path, "envs", e));
   } catch (err) {
     slot.error = String(err);
   } finally {
@@ -102,7 +103,7 @@ async function sync() {
       <button class="primary" :disabled="cmd.isRunning() || submitting" @click="sync">同步最新代码</button>
     </div>
     <p v-if="hub.error" class="error">{{ hub.error }}</p>
-    <div class="group-row">📁 envs <code>{{ hub.path }}/envs</code> <PathActions :path="`${hub.path}/envs`" /></div>
+    <div class="group-row">📁 envs <code>{{ joinPath(hub.path, "envs") }}</code> <PathActions :path="joinPath(hub.path, 'envs')" /></div>
     <div v-for="e in hub.envs" :key="e" class="env-item">
       <!-- 整行可点击展开/收起；操作区 @click.stop 避免点按钮误触展开 -->
       <div class="env-row" @click="toggle(e)">
@@ -111,7 +112,7 @@ async function sync() {
           <strong>{{ e }}</strong>
         </span>
         <span class="act" @click.stop>
-          <PathActions :path="`${hub.path}/envs/${e}`" />
+          <PathActions :path="joinPath(hub.path, 'envs', e)" />
           <button class="btn-sm" :disabled="cmd.isRunning()" @click="rmEnv(e)">移除</button>
         </span>
       </div>
