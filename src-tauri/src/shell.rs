@@ -84,15 +84,27 @@ fn stderr_tail_line(bytes: &[u8]) -> Option<String> {
         .map(str::to_string)
 }
 
+/// Windows 路径规范化：/ → \，连续分隔符压成一个（保留 UNC 开头 \\）。
+/// 前端拼路径用 / 连接，用户输入也可能是混合分隔符（如 C:\a\/b），
+/// 直接 replace 会留下 \\ 双反斜杠——explorer 解析失败即回退打开"文档"。
+pub fn normalize_win_path(path: &str) -> String {
+    let p = path.replace('/', "\\");
+    if let Some(rest) = p.strip_prefix("\\\\") {
+        format!("\\\\{}", rest.replace("\\\\", "\\"))
+    } else {
+        p.replace("\\\\", "\\")
+    }
+}
+
 /// (async)：open 触发自动化权限弹窗时可阻塞至用户响应（最长约 2 分钟），
 /// 须在主线程外执行（sync fn + async 标记 → 线程池），否则整个 GUI 冻结。
 #[tauri::command(async)]
 pub fn open_in_finder(path: String) -> Result<(), String> {
     if cfg!(target_os = "windows") {
-        // explorer 只认反斜杠路径：正斜杠会被当作命令行开关解析失败，
+        // explorer 只认反斜杠路径：正斜杠/双反斜杠都会解析失败，
         // 回退打开"文档"（用户报告的现象）。且 explorer 无论成败恒以
         // 退出码 1 返回，不能按退出码判错——spawn 成功即视为已打开。
-        let win_path = path.replace('/', "\\");
+        let win_path = normalize_win_path(&path);
         Command::new("explorer")
             .arg(&win_path)
             .spawn()
@@ -116,7 +128,7 @@ pub fn open_path(path: String) -> Result<(), String> {
     if cfg!(target_os = "windows") {
         // ShellExecuteW（tauri-plugin-opener）比 cmd /C start 稳定：正斜杠、
         // 中文路径、文件/目录分发都交给系统 API，且无闪黑窗问题
-        return tauri_plugin_opener::open_path(path.replace('/', "\\"), None::<&str>)
+        return tauri_plugin_opener::open_path(normalize_win_path(&path), None::<&str>)
             .map_err(|e| format!("打开失败: {e}"));
     }
     let mut cmd = if cfg!(target_os = "macos") {

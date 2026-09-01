@@ -1,7 +1,7 @@
 use gws_desk_lib::shell::{
     applescript_escape, detect_terminal, iterm_installed, list_dir, macos_terminal_script,
-    parse_version_from_body, read_text_file, shell_quote_path, terminal_options,
-    TerminalPreference,
+    normalize_win_path, parse_version_from_body, read_text_file, shell_quote_path,
+    terminal_options, TerminalPreference,
 };
 
 #[test]
@@ -163,6 +163,27 @@ fn shell_quote_path_wraps_and_escapes_single_quotes() {
     assert_eq!(shell_quote_path("/Users/foo/My Project"), "'/Users/foo/My Project'");
     // 单引号：关闭引号、\' 转义、重新打开
     assert_eq!(shell_quote_path("it's"), "'it'\\''s'");
+}
+
+#[test]
+fn normalize_win_path_converts_forward_slashes() {
+    assert_eq!(normalize_win_path("C:/tools/gws/test-hub2"), "C:\\tools\\gws\\test-hub2");
+}
+
+#[test]
+fn normalize_win_path_collapses_mixed_separators() {
+    // 用户设置里实际出现的形态：hub 目录含反斜杠、前端拼 /（lastHub 存了混合分隔符）
+    assert_eq!(normalize_win_path("C:\\tools\\gws\\/test-hub2"), "C:\\tools\\gws\\test-hub2");
+}
+
+#[test]
+fn normalize_win_path_collapses_consecutive_backslashes() {
+    assert_eq!(normalize_win_path("C:\\a\\\\b"), "C:\\a\\b");
+}
+
+#[test]
+fn normalize_win_path_preserves_unc_prefix() {
+    assert_eq!(normalize_win_path("//server/share/dir"), "\\\\server\\share\\dir");
 }
 
 #[test]

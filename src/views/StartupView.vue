@@ -50,11 +50,15 @@ async function pickInitParent() {
     // 选择器异常（极罕见）按取消处理
   }
 }
-/** 新建 hub 的完整目标路径：父目录 + 新目录名（末尾斜杠容错） */
+/** 新建 hub 的完整目标路径：父目录 + 新目录名（末尾斜杠容错）。
+ *  分隔符跟随父目录风格：Windows 反斜杠路径不能再拼 /（混合分隔符会让
+ *  explorer 打不开、回退"文档"），统一用父目录自身用的那一种。 */
 function initTarget(): string {
-  const parent = initParent.value.trim().replace(/\/+$/, "");
+  const parent = initParent.value.trim().replace(/[\\/]+$/, "");
   const name = initName.value.trim();
-  return name ? `${parent}/${name}` : "";
+  if (!name || !parent) return name && !parent ? name : "";
+  const sep = parent.includes("\\") ? "\\" : "/";
+  return `${parent}${sep}${name}`;
 }
 async function initHub() {
   const target = initTarget();
