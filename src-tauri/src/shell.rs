@@ -88,12 +88,21 @@ fn stderr_tail_line(bytes: &[u8]) -> Option<String> {
 /// 须在主线程外执行（sync fn + async 标记 → 线程池），否则整个 GUI 冻结。
 #[tauri::command(async)]
 pub fn open_in_finder(path: String) -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        // explorer 只认反斜杠路径：正斜杠会被当作命令行开关解析失败，
+        // 回退打开"文档"（用户报告的现象）。且 explorer 无论成败恒以
+        // 退出码 1 返回，不能按退出码判错——spawn 成功即视为已打开。
+        let win_path = path.replace('/', "\\");
+        Command::new("explorer")
+            .arg(&win_path)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {e}"))?;
+        return Ok(());
+    }
     let program = if cfg!(target_os = "macos") {
         "open"
     } else if cfg!(target_os = "linux") {
         "xdg-open"
-    } else if cfg!(target_os = "windows") {
-        "explorer"
     } else {
         return Err("不支持的平台".to_string());
     };
@@ -104,22 +113,16 @@ pub fn open_in_finder(path: String) -> Result<(), String> {
 /// open_in_finder 的 explorer：Windows 下后者对文件只会在资源管理器中选中）。
 #[tauri::command(async)]
 pub fn open_path(path: String) -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        // ShellExecuteW（tauri-plugin-opener）比 cmd /C start 稳定：正斜杠、
+        // 中文路径、文件/目录分发都交给系统 API，且无闪黑窗问题
+        return tauri_plugin_opener::open_path(path.replace('/', "\\"), None::<&str>)
+            .map_err(|e| format!("打开失败: {e}"));
+    }
     let mut cmd = if cfg!(target_os = "macos") {
         Command::new("open")
     } else if cfg!(target_os = "linux") {
         Command::new("xdg-open")
-    } else if cfg!(target_os = "windows") {
-        // start 是 cmd 内建而非可执行文件，须经 cmd /C；空 "" 是 start 的窗口标题占位，
-        // 否则带引号的路径首段会被当成标题吞掉
-        let mut c = Command::new("cmd");
-        #[cfg(windows)]
-        {
-            // cmd.exe 是控制台程序：拉起资源管理器前会闪黑窗，用 CREATE_NO_WINDOW 抑制
-            use std::os::windows::process::CommandExt;
-            c.creation_flags(0x0800_0000);
-        }
-        c.args(["/C", "start", ""]);
-        c
     } else {
         return Err("不支持的平台".to_string());
     };
