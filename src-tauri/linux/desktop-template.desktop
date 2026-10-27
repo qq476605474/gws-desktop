@@ -1,0 +1,20 @@
+[Desktop Entry]
+Categories=Development;
+Comment=多仓库需求开发管理：拉代码、合环境、提 MR、写文档
+Exec={{exec}} {{exec_arg}}
+Icon={{icon}}
+Name=GWS
+Terminal=false
+Type=Application
+
+# 为什么要有这个自定义模板
+#
+# Tauri 生成 .desktop 时 `Name=` 直接取 productName。而 Linux 的**包名**不能是
+# 中文（Debian 规定 package name 只能 [a-z0-9][a-z0-9+.-]+，dpkg 实测会拒：
+# 「无效的软件包名…必须以字母或数字开头」），所以 Linux 构建时用
+# `--config '{"productName":"gws"}'` 把 productName 覆盖成 ASCII。
+#
+# 那样一来菜单里就会显示成 "gws"。这个模板把 `Name=` 写死成中文 ——
+# 包名是 ASCII（装得上、能分发），显示名是中文（跟 mac 那边一致）。
+#
+# `{{exec}}` / `{{icon}}` 是 Tauri 填的变量（分别为二进制名与图标名）。

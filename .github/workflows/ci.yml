@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  rust:
+    name: Rust（测试 + clippy，${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # **三端都跑**：这套代码里有不少只在某个平台上才会走到的分支
+        # （路径分隔符、260 字符上限、Windows 的进程占用、权限位…），
+        # 只跑 Linux 的话它们永远发现不了。
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      # `src-tauri` 要链 Tauri，Linux 上得先装这些系统库。
+      # 只测 core / cli 的话可以不装，但那样 `commands/*` 里
+      # 「联网命令不能在 async 运行时里 panic」那批回归测试就跑不到了。
+      #
+      # ⚠️ 用 `libayatana-appindicator3-dev`：旧的 `libappindicator3-dev`
+      # 已从 Ubuntu 24.04 的仓库里移除，`ubuntu-latest` 现在就是 24.04，
+      # 装旧的会直接 `Unable to locate package`。
+      - name: 装 Tauri 的系统依赖（Linux）
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf \
+            libgtk-3-dev libsoup-3.0-dev
+
+      # 测试不联网（GitLab 相关的冒烟测试都标了 #[ignore]），所以 CI 里能跑全绿
+      - run: cargo test --workspace
+
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  web:
+    name: 前端（测试 + 类型检查）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      # 模板里漏 import 的组件编译器不报，所以这几个检查脚本必须跑
+      - run: npm run check:vue

@@ -1,0 +1,175 @@
+name: Release
+
+# 打 `vX.Y.Z` 的 tag 触发；也可以在 Actions 页手动跑一次（只出构建产物，不建 Release）。
+#
+# **三端都在 GitHub 的 runner 上构建**，产物直接挂到同一个 Release：
+#   macOS   → gws-desktop_<version>_aarch64.dmg   + gws-aarch64-apple-darwin
+#   Windows → gws-desktop_<version>_x64-setup.exe + gws-x86_64-pc-windows-msvc.exe
+#   Linux   → gws_<version>_amd64.deb             + gws-x86_64-unknown-linux-gnu
+#   sha256sums.txt（**覆盖上面全部资产**，自更新与 install.sh 都按它校验）
+#
+# ⚠️ 产物名必须与 `crates/core/src/update.rs` 的 `desktop_asset_name()` /
+# `asset_name()`、以及 `install.sh` 完全一致 —— 差一个字符，用户点「更新」就会
+# 报「该 Release 里没有适配当前平台的资产」。这个名字的对照表就上面那三行。
+#
+# ⚠️ `productName` 是 `GWS`，Tauri 产出的包名是 `GWS_<version>_<arch>.dmg` /
+# `GWS_<version>_x64-setup.exe`，与上面要的名字**都不一样**，所以每个平台都有
+# 一步「重命名」。别删那一步。
+
+on:
+  push:
+    tags: ["v*"]
+  # 手工发布：`gh workflow run release.yml -f tag=v1.0.0`（或在 Actions 页点）。
+  # **有这条是因为 tag 不一定是从本机 `git push` 上去的** —— 比如用 API 建的
+  # tag 不会触发 `push` 事件，没有这个入口就只能干看着。
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（如 v1.0.0）"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            name: macOS（Apple Silicon）
+            # `bin` 是 cargo 产出的文件名，`cli` 是**发布出去**的资产名
+            # （与 update.rs::asset_name() 一致）—— 两者别混用。
+            bin: gws
+            cli: gws-aarch64-apple-darwin
+            desktop: dmg
+          - os: windows-latest
+            name: Windows（x64）
+            bin: gws.exe
+            cli: gws-x86_64-pc-windows-msvc.exe
+            desktop: nsis
+          - os: ubuntu-22.04
+            name: Linux（x64）
+            bin: gws
+            cli: gws-x86_64-unknown-linux-gnu
+            desktop: deb
+    steps:
+      - uses: actions/checkout@v4
+
+      # Linux 桌面包的系统依赖：webkit2gtk 是 Tauri 的运行时依赖，
+      # libayatana-appindicator3 是托盘。ubuntu-24.04 上没有旧的
+      # `libappindicator3-dev`（已从仓库移除），所以这里用 22.04 + 新包名。
+      - name: 安装 Linux 构建依赖
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # CLI 二进制。名字按编译期的 host 三元组取，与 `update.rs::asset_name()` 一致。
+      - name: 构建 CLI
+        run: cargo build --release -p gws-cli
+
+      # 桌面端。`beforeBuildCommand` 会把 CLI 打进 resources 并构建前端。
+      - name: 构建桌面端
+        run: npm run tauri build -- --bundles ${{ matrix.desktop }}
+
+      # 收产物 + 重命名。shell 固定 bash：Windows runner 上默认是 pwsh，
+      # 而这里的逻辑（case/find/通配）用 bash 写最省事。
+      - name: 收集产物
+        shell: bash
+        env:
+          # tag 可能来自 `push`，也可能来自手工触发时填的那个
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -eu
+          mkdir -p out
+          cp "target/release/${{ matrix.bin }}" "out/${{ matrix.cli }}"
+
+          case "${{ matrix.os }}" in
+            macos-latest)
+              version="${TAG#v}"
+              find target/release/bundle/dmg -name '*.dmg' -exec \
+                cp {} "out/gws-desktop_${version}_aarch64.dmg" \;
+              ;;
+            windows-latest)
+              version="${TAG#v}"
+              find target/release/bundle/nsis -name '*-setup.exe' -exec \
+                cp {} "out/gws-desktop_${version}_x64-setup.exe" \;
+              ;;
+            *)
+              version="${TAG#v}"
+              find target/release/bundle/deb -name '*.deb' -exec \
+                cp {} "out/gws_${version}_amd64.deb" \;
+              ;;
+          esac
+
+          ls -l out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.os }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    name: 汇总并发布
+    needs: build
+    # push tag 时自动发；手工触发时也发（tag 由输入给出）
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 生成 sha256sums.txt
+        run: |
+          set -eu
+          cd dist
+          ls -l
+          sha256sum * > sha256sums.txt
+          cat sha256sums.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          # 手工触发时 `github.ref` 是分支名，必须显式告诉它发到哪个 tag 上
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## GWS ${{ github.event.inputs.tag || github.ref_name }}
+
+            命令行安装（自动选平台 + 校验 sha256）：
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | sh
+            ```
+
+            桌面端下载对应平台的包。macOS 包没有签名，首次打开请**右键 → 打开**。
+
+            | 系统 | 文件 |
+            |---|---|
+            | macOS（Apple Silicon） | `gws-desktop_<版本>_aarch64.dmg` |
+            | Windows 64 位 | `gws-desktop_<版本>_x64-setup.exe` |
+            | Linux（Debian / Ubuntu） | `gws_<版本>_amd64.deb` |
+            | 命令行（macOS / Windows / Linux） | `gws-<平台三元组>[.exe]` |
+
+            （`<版本>` 不带 `v` 前缀，如 `1.0.0`。）
+
+            所有资产都在 `sha256sums.txt` 里 —— 桌面端的「一键更新」与 `install.sh`
+            都会拿它校验，对不上就拒绝安装。

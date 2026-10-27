@@ -1,0 +1,80 @@
+/* 只放全局重置与少量设计令牌。
+   组件样式一律用 Naive UI 的主题覆盖（见 App.vue），不再自己写一套。 */
+
+:root {
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+/* 表格/卡片边框色。
+   用自己的变量而不是 Naive UI 的 --n-border-color，是因为**弹窗会 teleport 到
+   body**，跑出了 NConfigProvider 的作用域，那里取不到 --n-border-color，
+   于是用了写死的浅色兜底 —— 深色主题下就刺眼（实测反馈）。
+   定义在 :root 上，弹窗内外都有效。 */
+:root,
+[data-theme="light"] {
+  --xg-border: rgba(0, 0, 0, 0.1);
+  --xg-border-soft: rgba(0, 0, 0, 0.06);
+  --xg-fill-soft: rgba(0, 0, 0, 0.04);
+  --sider-bg: #fafafa;
+}
+[data-theme="dark"] {
+  --xg-border: rgba(255, 255, 255, 0.14);
+  --xg-border-soft: rgba(255, 255, 255, 0.08);
+  --xg-fill-soft: rgba(255, 255, 255, 0.05);
+  --sider-bg: #18181c;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 13px;
+}
+
+/* 路径、分支名这类标识一律等宽，扫起来快很多 */
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+/* 拖拽区：Tauri 无边框窗口用得上；当前是有边框窗口，留着不碍事 */
+[data-tauri-drag-region] {
+  -webkit-app-region: drag;
+}
+
+/* 滚动条：macOS 原生样式之外给 Windows/Linux 一个统一观感 */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(128, 128, 128, 0.35);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(128, 128, 128, 0.55);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+/* NAlert 里的行内操作按钮（Naive UI 的 NAlert 没有 action 插槽） */
+.alert-actions {
+  margin-top: 6px;
+  display: flex;
+  gap: 10px;
+}
+.todo-btn,
+.retry {
+  margin-left: 8px;
+}

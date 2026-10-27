@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = ["crates/core", "crates/cli", "src-tauri"]
+
+[workspace.package]
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+[workspace.dependencies]
+gws-core = { path = "crates/core" }
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# 只为给 git 的 Authorization 头做 Base64（Basic 认证）。零传递依赖。
+base64 = "0.22"
+# 校验下载的更新包。截断/损坏的下载会替换出一个跑不起来的二进制。
+sha2 = "0.10"
+# 只要本地时区的「今天」。分支名里的日期是团队的「发车日期」，
+# 用 UTC 会让清晨创建的需求落到前一天（CST 比 UTC 早 8 小时）。
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+# 走 native-tls（macOS 上用系统信任库）：将来若换成公司自签 CA，装进系统
+# keychain 即可生效，不用改代码。rustls 需要显式喂 CA，对内部工具是负担。
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "native-tls"] }
+
+# 发布版瘦身：分发包要传到 GitLab Releases（设计方案 §11.4）
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

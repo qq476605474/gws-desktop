@@ -1,0 +1,20 @@
+[package]
+name = "gws-core"
+description = "GWS核心领域逻辑：hub / 仓库 / 环境 / 需求工作区 / git / GitLab / doc-hub"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+base64.workspace = true
+chrono.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+sha2.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+# 测试里要用一个只在测试期存在的 HTTP 桩，见 tests/gitlab_client.rs
