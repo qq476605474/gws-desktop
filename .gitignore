@@ -17,3 +17,5 @@ src-tauri/resources/*
 .vscode/
 *.iml
 .DS_Store
+# ── 本地私人笔记（不入库，跟着目录迁移）──
+*.local.md

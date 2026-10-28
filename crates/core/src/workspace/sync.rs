@@ -385,40 +385,69 @@ impl PushOutcome {
 /// **先整体检查是否落后远程**：他人已推送时直接推会被 git 拒（non-fast-forward），
 /// 但先提示 `gws pull` 比让 git 抛一个英文错误直观得多。
 pub fn push(hub: &Hub, ws: &Workspace, filter: &ModuleFilter) -> Result<PushOutcome> {
+    push_with(hub, ws, filter, None)
+}
+
+/// 带进度的 [`push`]。
+///
+/// 进度回调单独开一个入口而不是给 `push` 加参数：CLI 与 `sync_merge` 测试里
+/// 有四十多处调用，只为传一个 `None` 全改一遍不值得。桌面端用这个版本，
+/// 每个模块都要 `fetch`，没有逐模块进度界面上就是一个不动的转圈。
+pub fn push_with(
+    hub: &Hub,
+    ws: &Workspace,
+    filter: &ModuleFilter,
+    cb: crate::progress::Progress<'_>,
+) -> Result<PushOutcome> {
     let branch = ws.branch().to_string();
     let modules = selected(ws, filter, &hub.dochub_name())?;
     let mut out = PushOutcome::default();
 
     // 第一遍：落后检查，任一模块落后就整体不动
+    let mut rep = crate::progress::Reporter::start(cb, modules.len(), "检查远程是否有新提交");
     for m in &modules {
         // 带 hub 的 token：私有仓库不带它 fetch 直接失败，判落后就会误判成"没推过"
         let git = Git::new(ws.module_path(m)).with_hub_token(hub);
         let _ = git.fetch();
         if !git.remote_branch_exists(&branch) {
+            rep.ok(m.clone());
             continue;
         }
         let (_, behind) = git.ahead_behind(&format!("origin/{branch}"))?;
         if behind > 0 {
             out.behind.push((m.clone(), behind));
+            rep.fail(m.clone(), format!("落后远程 {behind} 个提交"));
+        } else {
+            rep.ok(m.clone());
         }
     }
+    rep.finish();
     if !out.behind.is_empty() {
         return Ok(out);
     }
 
     // 第二遍：逐个推
+    let mut rep = crate::progress::Reporter::start(cb, modules.len(), "推送需求分支");
     for m in &modules {
         let git = Git::new(ws.module_path(m)).with_hub_token(hub);
         let dirty = git.dirty_count()?;
         if dirty > 0 {
             out.dirty.push((m.clone(), dirty));
+            rep.fail(m.clone(), format!("有 {dirty} 个未提交改动"));
             continue;
         }
         match git.push(&branch, true) {
-            Ok(()) => out.pushed.push(m.clone()),
-            Err(e) => out.failed.push((m.clone(), e.to_string())),
+            Ok(()) => {
+                out.pushed.push(m.clone());
+                rep.ok(m.clone());
+            }
+            Err(e) => {
+                out.failed.push((m.clone(), e.to_string()));
+                rep.fail(m.clone(), e.to_string());
+            }
         }
     }
+    rep.finish();
 
     Ok(out)
 }
@@ -440,9 +469,21 @@ pub fn pull(
     filter: &ModuleFilter,
     rebase: bool,
 ) -> Result<PullOutcome> {
+    pull_with(hub, ws, filter, rebase, None)
+}
+
+/// 带进度的 [`pull`]（理由见 [`push_with`]）。
+pub fn pull_with(
+    hub: &Hub,
+    ws: &Workspace,
+    filter: &ModuleFilter,
+    rebase: bool,
+    cb: crate::progress::Progress<'_>,
+) -> Result<PullOutcome> {
     let branch = ws.branch().to_string();
     let modules = selected(ws, filter, &hub.dochub_name())?;
     let mut out = PullOutcome::default();
+    let mut rep = crate::progress::Reporter::start(cb, modules.len(), "拉取需求分支");
 
     for m in &modules {
         let git = Git::new(ws.module_path(m)).with_hub_token(hub);
@@ -450,15 +491,18 @@ pub fn pull(
 
         if !git.remote_branch_exists(&branch) {
             out.skipped.push((m.clone(), format!("远程无 {branch}")));
+            rep.ok(format!("{m}（远程无 {branch}）"));
             continue;
         }
         let (_, behind) = git.ahead_behind(&format!("origin/{branch}"))?;
         if behind == 0 {
+            rep.ok(format!("{m}（已是最新）"));
             continue; // 已是最新，不必动
         }
         let dirty = git.dirty_count()?;
         if dirty > 0 {
             out.dirty.push((m.clone(), dirty));
+            rep.fail(m.clone(), format!("有 {dirty} 个未提交改动，未拉取"));
             continue;
         }
 
@@ -470,6 +514,7 @@ pub fn pull(
         let unmerged = git.unmerged_paths()?;
         if ok && unmerged.is_empty() {
             out.updated.push((m.clone(), behind));
+            rep.ok(format!("{m}（{behind} 个提交）"));
         } else if unmerged.is_empty() {
             // 合并**根本没成**（不是冲突）：未合并路径为空就说明 git 直接拒绝了。
             // 原来也报成「冲突」，人会去找不存在的冲突标记 —— 如实说，并带上 git 的话。
@@ -477,11 +522,14 @@ pub fn pull(
                 m.clone(),
                 format!("合并失败（不是冲突，现场没动）：{}{}", first_line(&output), ident_hint(&output)),
             ));
+            rep.fail(m.clone(), "合并失败（不是冲突，现场没动）");
         } else {
             out.conflicts.push(m.clone());
+            rep.fail(m.clone(), "冲突待处理");
         }
     }
 
+    rep.finish();
     Ok(out)
 }
 
@@ -516,6 +564,17 @@ pub fn sync_main(
     filter: &ModuleFilter,
     base_override: Option<&[String]>,
 ) -> Result<SyncMainOutcome> {
+    sync_main_with(hub, ws, filter, base_override, None)
+}
+
+/// 带进度的 [`sync_main`]（理由见 [`push_with`]）。
+pub fn sync_main_with(
+    hub: &Hub,
+    ws: &Workspace,
+    filter: &ModuleFilter,
+    base_override: Option<&[String]>,
+    cb: crate::progress::Progress<'_>,
+) -> Result<SyncMainOutcome> {
     let chain: Vec<String> = match base_override {
         Some(b) if !b.is_empty() => b.to_vec(),
         _ => {
@@ -529,6 +588,7 @@ pub fn sync_main(
     };
     let modules = selected(ws, filter, &hub.dochub_name())?;
     let mut out = SyncMainOutcome { from: chain.clone(), ..Default::default() };
+    let mut rep = crate::progress::Reporter::start(cb, modules.len(), "把基线最新提交合进本需求");
 
     for m in &modules {
         let wt = ws.module_path(m);
@@ -544,6 +604,7 @@ pub fn sync_main(
             let main = format!("origin/{}", Repo::open(hub, m)?.main_branch()?);
             if src == main {
                 out.blocked.push((m.clone(), format!("主干 {src} 不存在，跳过")));
+                rep.fail(m.clone(), format!("主干 {src} 不存在，跳过"));
                 continue;
             }
             out.downgraded.push((m.clone(), format!("{src} → {main}")));
@@ -561,19 +622,24 @@ pub fn sync_main(
                 // 合并本身冲突。此时未提交改动被 git 暂存在 MERGE_AUTOSTASH，
                 // 工作树里暂时看不到——解决冲突 commit 后会自动回填。
                 out.conflicts.push(m.clone());
+                rep.fail(m.clone(), "合并冲突待处理");
             } else {
                 // 合并成功了，是回填未提交改动时撞车。解决后 git add 即可，
                 // 无需 commit。
                 out.restash_conflicts.push(m.clone());
+                rep.fail(m.clone(), "改动回填冲突");
             }
         } else if output.is_empty() || !git.in_merge() {
             let note = res.note().unwrap_or_else(|| format!("← {src}"));
-            out.updated.push((m.clone(), note));
+            out.updated.push((m.clone(), note.clone()));
+            rep.ok(format!("{m}（{note}）"));
         } else {
-            out.blocked.push((m.clone(), output));
+            out.blocked.push((m.clone(), output.clone()));
+            rep.fail(m.clone(), output);
         }
     }
 
+    rep.finish();
     Ok(out)
 }
 
@@ -624,6 +690,22 @@ pub fn merge(
     push_after: bool,
     force: bool,
 ) -> Result<MergeOutcome> {
+    merge_with(hub, ws, env_id, filter, push_after, force, None)
+}
+
+/// 带进度的 [`merge`]（理由见 [`push_with`]）。
+///
+/// 三段各自上报：检查需求分支与远程的差异 → 合进环境 → 推送环境分支。
+/// 每段都从 `Start` 重新开始，界面上的计数与标签会跟着换。
+pub fn merge_with(
+    hub: &Hub,
+    ws: &Workspace,
+    env_id: &str,
+    filter: &ModuleFilter,
+    push_after: bool,
+    force: bool,
+    cb: crate::progress::Progress<'_>,
+) -> Result<MergeOutcome> {
     let branch = ws.branch().to_string();
     let modules = selected(ws, filter, &hub.dochub_name())?;
     let envs_dir = hub.env_dir(env_id);
@@ -636,19 +718,26 @@ pub fn merge(
     // 旧版。
     let mut behind: Vec<(String, u64, u64)> = Vec::new();
     let mut unpushed: Vec<(String, u64)> = Vec::new();
+    let mut rep = crate::progress::Reporter::start(cb, modules.len(), "检查需求分支与远程的差异");
     for m in &modules {
         let git = Git::new(ws.module_path(m));
         let _ = git.fetch();
         if !git.remote_branch_exists(&branch) {
+            rep.ok(m.clone());
             continue;
         }
         let (a, b) = git.ahead_behind(&format!("origin/{branch}"))?;
         if b > 0 {
             behind.push((m.clone(), a, b));
+            rep.fail(m.clone(), format!("落后远程 {b} 个提交"));
         } else if a > 0 {
             unpushed.push((m.clone(), a));
+            rep.ok(format!("{m}（本地有 {a} 个未推送）"));
+        } else {
+            rep.ok(m.clone());
         }
     }
+    rep.finish();
     if !behind.is_empty() && !force {
         let detail = behind
             .iter()
@@ -669,9 +758,15 @@ pub fn merge(
     out.pending.extend(unpushed);
 
     // ── 逐模块处理 ────────────────────────────────────────────────────
+    let mut rep = crate::progress::Reporter::start(
+        cb,
+        modules.len(),
+        format!("合并到环境 {env_id}"),
+    );
     for m in &modules {
         let Ok(repo) = Repo::open(hub, m) else {
             out.skipped.push((m.clone(), "仓库不存在".into()));
+            rep.ok(format!("{m}（跳过：仓库不存在）"));
             continue;
         };
         let env_branch = env_branch_for(hub, env_id, m);
@@ -682,6 +777,7 @@ pub fn merge(
                 m.clone(),
                 format!("该仓库没有 {env_branch} 分支，本需求不涉及它"),
             ));
+            rep.ok(format!("{m}（跳过：没有 {env_branch} 分支）"));
             continue;
         }
 
@@ -715,6 +811,7 @@ pub fn merge(
             };
             if let Err(e) = created {
                 out.skipped.push((m.clone(), format!("环境 worktree 创建失败: {e}")));
+                rep.fail(m.clone(), format!("环境 worktree 创建失败: {e}"));
                 continue;
             }
         }
@@ -738,6 +835,7 @@ pub fn merge(
             if !gwt.unmerged_paths()?.is_empty() {
                 out.conflicts.push(m.clone());
                 out.conflict_dirs.insert(m.clone(), wt.to_string_lossy().to_string());
+                rep.fail(m.clone(), "冲突待处理");
                 continue;
             }
             let _ = gwt.commit_no_edit();
@@ -752,6 +850,7 @@ pub fn merge(
                 let _ = gwt.clean_untracked(CLEAN_KEEP);
             } else {
                 out.pending.push((m.clone(), ahead));
+                rep.ok(format!("{m}（已有 {ahead} 个未推送提交，未动）"));
                 continue;
             }
         }
@@ -762,17 +861,21 @@ pub fn merge(
 
         if !repo.git().remote_branch_exists(&branch) {
             out.skipped.push((m.clone(), format!("origin/{branch} 不存在，先 gws push")));
+            rep.fail(m.clone(), format!("origin/{branch} 不存在，先推送需求分支"));
             continue;
         }
 
         let (_, _output) = gwt.merge(&format!("origin/{branch}"), false)?;
         if gwt.unmerged_paths()?.is_empty() {
             out.clean.push(m.clone());
+            rep.ok(m.clone());
         } else {
             out.conflicts.push(m.clone());
             out.conflict_dirs.insert(m.clone(), wt.to_string_lossy().to_string());
+            rep.fail(m.clone(), "冲突待处理");
         }
     }
+    rep.finish();
 
     // ── 推送决策：默认只合到本地，绝不自动推 ──────────────────────────
     if push_after && !out.has_conflicts() {
@@ -784,6 +887,7 @@ pub fn merge(
 
         if !all.is_empty() {
             out.did_push = true;
+            let mut rep = crate::progress::Reporter::start(cb, all.len(), "推送环境分支");
             for m in &all {
                 let env_branch = env_branch_for(hub, env_id, m);
                 let gwt = Git::new(envs_dir.join(m)).with_hub_token(hub);
@@ -793,10 +897,15 @@ pub fn merge(
                         // 记下**实际推的那条分支** —— 界面要报的就是它，
                         // 不是环境标识（`pre` 与 `pre-202610` 是两回事）
                         out.branches.insert(m.clone(), env_branch.clone());
+                        rep.ok(format!("{m} → origin/{env_branch}"));
                     }
-                    Err(e) => out.push_failed.push((m.clone(), e.to_string())),
+                    Err(e) => {
+                        out.push_failed.push((m.clone(), e.to_string()));
+                        rep.fail(m.clone(), e.to_string());
+                    }
                 }
             }
+            rep.finish();
         }
     }
 

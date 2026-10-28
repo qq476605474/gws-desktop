@@ -21,9 +21,11 @@ vi.mock("../bridge", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../bridge")>();
   return {
     ...actual,
+    paseoAvailable: vi.fn(),
     paseoProviders: vi.fn(),
     paseoOpenSession: vi.fn(),
     paseoOpenFreeSession: vi.fn(),
+    copyText: vi.fn(),
   };
 });
 
@@ -68,6 +70,7 @@ async function start(w: ReturnType<typeof mountButton>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  (api.paseoAvailable as ReturnType<typeof vi.fn>).mockResolvedValue(true);
   (api.paseoProviders as ReturnType<typeof vi.fn>).mockResolvedValue(["claude", "codex"]);
   (api.paseoOpenSession as ReturnType<typeof vi.fn>).mockResolvedValue({ ...ok, branch: BRANCH });
   (api.paseoOpenFreeSession as ReturnType<typeof vi.fn>).mockResolvedValue(ok);
@@ -127,6 +130,18 @@ describe("开 AI 会话", () => {
     const btn = w.findAll("button").find((b) => b.text() === "启动")!;
     expect(btn.attributes("disabled")).toBeDefined();
     expect((api.paseoOpenFreeSession as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+  });
+
+  it("Paseo 没装时：不弹 provider 弹窗，复制 hub 目录并提示安装", async () => {
+    (api.paseoAvailable as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const w = mountButton({ label: "开 AI 会话" });
+    await w.find("button").trigger("click");
+    await flush();
+    await w.vm.$nextTick();
+
+    expect((api.copyText as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual(["/hub"]);
+    expect((api.paseoProviders as ReturnType<typeof vi.fn>).mock.calls.length).toBe(0);
+    expect(w.text()).not.toContain("选择用哪个 Paseo provider");
   });
 
   it("paseo 没装好时：弹窗里保留真实错误，而不是只说没 provider", async () => {

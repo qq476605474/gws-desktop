@@ -1591,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "gws-cli"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "clap",
  "gws-core",
@@ -1599,7 +1599,7 @@ dependencies = [
 
 [[package]]
 name = "gws-core"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "gws-desktop"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "gws-core",
  "serde",

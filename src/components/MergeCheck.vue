@@ -14,6 +14,7 @@ import { computed, ref } from "vue";
 import { NButton, NCard, NModal, NSelect, NSpin, NTag, useMessage } from "naive-ui";
 
 import * as api from "../bridge";
+import EditorButton from "./EditorButton.vue";
 import FileBrowser from "./FileBrowser.vue";
 import { useAppStore } from "../stores/app";
 import type { EnvModuleCheck } from "../types";
@@ -114,6 +115,19 @@ async function pushAll() {
         <NButton size="small" :loading="loading" :disabled="!env" @click="load">
           {{ rows.length ? "重新检查" : "开始检查" }}
         </NButton>
+        <!-- **整个环境的总入口**：批量 review / 批量解冲突时，在 Rebased、IDEA
+             里打开这一个目录就够了，不用逐个模块开（实测反馈）。 -->
+        <template v-if="env">
+          <NButton size="small" @click="api.openInFinder(`${app.hub?.root}/envs/${env}`)">
+            打开环境目录
+          </NButton>
+          <EditorButton
+            size="small"
+            :path="`${app.hub?.root}/envs/${env}`"
+            label="用编辑器打开整个环境"
+            :secondary="false"
+          />
+        </template>
         <div class="spacer" />
         <NButton
           v-if="unpushed.length"
@@ -137,8 +151,8 @@ async function pushAll() {
         <NCard v-if="conflicts.length" size="small" class="verdict bad">
           <span class="v-title">有 {{ conflicts.length }} 个模块存在未解决的冲突</span>
           <div class="muted small">
-            合并卡在中途，环境里是**半合并状态**。到对应目录里解决后提交即可
-            （点右边的「浏览文件」能看到冲突文件）。
+            合并卡在中途，环境里是**半合并状态**。每个模块右边的「用编辑器解决冲突」
+            会直接打开 <code>envs/{{ env }}/&lt;模块&gt;</code>，解完提交后再点一次「重新检查」。
           </div>
         </NCard>
         <NCard
@@ -176,21 +190,30 @@ async function pushAll() {
             <span class="muted small">{{ r.commits.length }} 个提交 · {{ r.files }} 个文件</span>
           </template>
           <template #header-extra>
-            <NButton
-              size="tiny"
-              @click="
-                browse = {
-                  dir: `${app.hub?.root}/envs/${env}/${r.module}`,
-                  repo: r.module,
-                  label: `${r.module} @ ${env}`,
-                  // **基准是远程环境分支**：检查合并时关心的是「本地 dev 比远程
-                  // dev 多了什么」，而不是「跟主干比」（实测反馈）
-                  base: r.env_branch ? `origin/${r.env_branch}` : null,
-                }
-              "
-            >
-              浏览文件
-            </NButton>
+            <div class="head-btns">
+              <!-- **在需求里直接打开环境里的那份代码**：解冲突、推之前 review 都不必
+                   再切到「环境」页去找同一个目录（实测反馈）。 -->
+              <EditorButton
+                size="tiny"
+                :path="`${app.hub?.root}/envs/${env}/${r.module}`"
+                :label="r.conflict ? '用编辑器解决冲突' : '用编辑器打开'"
+              />
+              <NButton
+                size="tiny"
+                @click="
+                  browse = {
+                    dir: `${app.hub?.root}/envs/${env}/${r.module}`,
+                    repo: r.module,
+                    label: `${r.module} @ ${env}`,
+                    // **基准是远程环境分支**：检查合并时关心的是「本地 dev 比远程
+                    // dev 多了什么」，而不是「跟主干比」（实测反馈）
+                    base: r.env_branch ? `origin/${r.env_branch}` : null,
+                  }
+                "
+              >
+                浏览文件
+              </NButton>
+            </div>
           </template>
 
           <p v-if="r.error" class="err small">{{ r.error }}</p>
@@ -229,6 +252,7 @@ async function pushAll() {
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
+  flex-wrap: wrap;
 }
 .env-sel {
   width: 200px;
@@ -254,6 +278,11 @@ async function pushAll() {
 }
 .mod {
   margin-bottom: 10px;
+}
+.head-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .tag {
   margin-left: 6px;

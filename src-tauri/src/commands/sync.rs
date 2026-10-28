@@ -1,4 +1,8 @@
 //! 推送 / 拉取 / 合并 / 同步。
+//!
+//! 这一组原来都是**同步命令**：命令体在主线程上跑，几十个仓库的 `fetch`/`merge`
+//! 期间界面完全不响应，鼠标变成旋转的等待图标（实测反馈）。现在统一走
+//! `#[tauri::command(async)]` + `bg`，并上报逐模块进度。
 
 use tauri::State;
 use gws_core::workspace::sync::{self, DoneOutcome, MergeOutcome, PullOutcome, PushOutcome, SyncMainOutcome, SyncOutcome};
@@ -6,40 +10,56 @@ use gws_core::workspace::Workspace;
 
 use super::{bg, App, CmdResult, FilterInput};
 
-#[tauri::command]
-pub fn ws_push(branch: String, filter: FilterInput, app: State<'_, App>) -> CmdResult<PushOutcome> {
-    app.with_hub(|hub| {
-        let ws = Workspace::open(hub, &branch)?;
-        sync::push(hub, &ws, &filter.into())
+#[tauri::command(async)]
+pub async fn ws_push(
+    branch: String,
+    filter: FilterInput,
+    app: State<'_, App>,
+    app_handle: tauri::AppHandle,
+) -> CmdResult<PushOutcome> {
+    let hub = app.hub()?;
+    let cb = super::progress_cb(&app_handle);
+    bg(move || {
+        let ws = Workspace::open(&hub, &branch)?;
+        Ok(sync::push_with(&hub, &ws, &filter.into(), Some(&cb))?)
     })
+    .await
 }
 
-#[tauri::command]
-pub fn ws_pull(
+#[tauri::command(async)]
+pub async fn ws_pull(
     branch: String,
     rebase: bool,
     filter: FilterInput,
     app: State<'_, App>,
+    app_handle: tauri::AppHandle,
 ) -> CmdResult<PullOutcome> {
-    app.with_hub(|hub| {
-        let ws = Workspace::open(hub, &branch)?;
-        sync::pull(hub, &ws, &filter.into(), rebase)
+    let hub = app.hub()?;
+    let cb = super::progress_cb(&app_handle);
+    bg(move || {
+        let ws = Workspace::open(&hub, &branch)?;
+        Ok(sync::pull_with(&hub, &ws, &filter.into(), rebase, Some(&cb))?)
     })
+    .await
 }
 
-#[tauri::command]
-pub fn ws_merge(
+#[tauri::command(async)]
+pub async fn ws_merge(
     branch: String,
     env: String,
     push: bool,
     force: bool,
     filter: FilterInput,
     app: State<'_, App>,
+    app_handle: tauri::AppHandle,
 ) -> CmdResult<MergeOutcome> {
-    app.with_hub(|hub| {
-        let ws = Workspace::open(hub, &branch)?;
-        sync::merge(hub, &ws, &env, &filter.into(), push, force)
+    let hub = app.hub()?;
+    let cb = super::progress_cb(&app_handle);
+    bg(move || {
+        let ws = Workspace::open(&hub, &branch)?;
+        Ok(sync::merge_with(&hub, &ws, &env, &filter.into(), push, force, Some(&cb))?)
     })
+    .await
 }
 
 #[derive(Debug, Clone, Default, serde::Deserialize)]
@@ -51,17 +71,21 @@ pub struct SyncMainInput {
     pub filter: FilterInput,
 }
 
-#[tauri::command]
-pub fn ws_sync_main(
+#[tauri::command(async)]
+pub async fn ws_sync_main(
     branch: String,
     input: SyncMainInput,
     app: State<'_, App>,
+    app_handle: tauri::AppHandle,
 ) -> CmdResult<SyncMainOutcome> {
-    app.with_hub(|hub| {
-        let ws = Workspace::open(hub, &branch)?;
+    let hub = app.hub()?;
+    let cb = super::progress_cb(&app_handle);
+    bg(move || {
+        let ws = Workspace::open(&hub, &branch)?;
         let from = if input.from.is_empty() { None } else { Some(input.from.as_slice()) };
-        sync::sync_main(hub, &ws, &input.filter.into(), from)
+        Ok(sync::sync_main_with(&hub, &ws, &input.filter.into(), from, Some(&cb))?)
     })
+    .await
 }
 
 // ══ 合并后检查（需求：合进 dev 之后要能看「合了什么、推没推」）══════════

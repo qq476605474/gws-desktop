@@ -23,6 +23,8 @@ import type {
   DoneOutcome,
   EditorOption,
   EntryInfo,
+  InstalledApp,
+  ProgramPickerDefault,
   EnvAddInput,
   EnvModuleCheck,
   EnvRow,
@@ -389,6 +391,8 @@ export const syncTools = () => tracked(invoke<ToolSyncOutcome>("sync_tools"));
 
 // ══ Paseo ═════════════════════════════════════════════════════════════
 
+/** Paseo CLI 是否可用（「开 AI 会话」的前置探测）。 */
+export const paseoAvailable = () => plain(invoke<boolean>("paseo_available"));
 /** 可选的 Paseo provider（`paseo provider ls` 里可用且启用的，保持原顺序）。 */
 export const paseoProviders = () => plain(invoke<string[]>("paseo_providers"));
 /** 在 hub 根目录开一个 AI 会话（cwd 是根目录，AI 才读得到约定与主干代码）。 */
@@ -437,6 +441,14 @@ export const terminalOptions = () => plain(invoke<TerminalOption[]>("terminal_op
 export const openInEditor = (path: string, editor: string | null, customCommand: string | null) =>
   visible(invoke<void>("open_in_editor", { path, editor, customCommand }));
 export const editorOptions = () => plain(invoke<EditorOption[]>("editor_options"));
+/** 这些自定义命令指向的程序是否已不存在（设置页标注「已卸载」）。 */
+export const editorProgramsMissing = (commands: string[]) =>
+  plain(invoke<boolean[]>("editor_programs_missing", { commands }));
+/** 「选择程序」该从哪个目录开始找、只看哪些扩展名。 */
+export const programPickerDefault = () =>
+  plain(invoke<ProgramPickerDefault>("program_picker_default"));
+/** 本机已安装的程序（设置里选编辑器时直接挑，不用翻目录）。 */
+export const installedApps = () => plain(invoke<InstalledApp[]>("installed_apps"));
 export const readTextFile = (path: string) => plain(invoke<string>("read_text_file", { path }));
 export const listDir = (path: string) => plain(invoke<string[]>("list_dir", { path }));
 export const listEntries = (path: string) => plain(invoke<EntryInfo[]>("list_entries", { path }));

@@ -4,6 +4,8 @@ import { computed, onMounted, ref, watch } from "vue";
 import { NAlert, NButton, NCard, NInput, NSelect, NTag, useMessage } from "naive-ui";
 
 import * as api from "../bridge";
+import ProgramPicker from "../components/ProgramPicker.vue";
+import { commandForProgram, displayLabel, programLabel } from "../lib/editors";
 import { useUpdater } from "../lib/updater";
 import { useCopy } from "../lib/copy";
 import { personalAccessTokensUrl } from "../lib/gitlab";
@@ -12,6 +14,7 @@ import { withBusy } from "../busy";
 import type {
   EditorOption,
   GitlabStatus,
+  InstalledApp,
   QuickLink,
   TerminalOption,
   ToolSyncOutcome,
@@ -44,14 +47,67 @@ const {
 } = useUpdater();
 const checking = ref(false);
 const terms = ref<TerminalOption[]>([{ id: "system", label: "跟随系统" }]);
-/** 「用编辑器打开」的候选（后端探测本机装了哪些）。 */
-const editors = ref<EditorOption[]>([{ id: "idea", label: "IntelliJ IDEA", installed: true }]);
-const editorOpts = computed(() =>
-  editors.value.map((e) => ({
-    label: e.installed || e.id === "custom" ? e.label : `${e.label}（未安装）`,
-    value: e.id,
-  })),
-);
+/** 后端给的编辑器目录：只用来把旧配置里的预设 id 显示成正式名字。 */
+const catalog = ref<EditorOption[]>([{ id: "idea", label: "IntelliJ IDEA", installed: true }]);
+/** 已卸载 / 路径失效的程序，与 `app.editors` 同序。 */
+const missing = ref<boolean[]>([]);
+
+async function checkPrograms() {
+  try {
+    missing.value = await api.editorProgramsMissing(app.editors.map((e) => e.command));
+  } catch {
+    // 探测失败就不标（点开时后端仍会给明确原因）
+  }
+}
+
+/** 增删 / 排序都会让下标错位，统一重查。 */
+watch(() => app.editors, () => void checkPrograms(), { deep: true });
+
+/**
+ * 选程序 → 记住，全程不用填命令。
+ *
+ * 默认给「已安装程序」列表（像「应用程序」文件夹一样一眼看全）；
+ * 列表里没有的再走系统文件对话框，从默认的程序目录开始找。
+ *
+ * macOS 选到 `.app` 包时用 `open -a` 启动（直接执行包目录会失败）；
+ * 其它平台记住带引号的完整路径，后端会自动把目录追加在末尾。
+ */
+const pickingProgram = ref(false);
+
+/** 从列表里挑中一个。 */
+function pickProgram(a: InstalledApp) {
+  pickingProgram.value = false;
+  if (app.addProgram(a.name, a.command)) msg.success("已添加");
+  else msg.info("这个程序已经在列表里了");
+}
+
+/** 列表里没有 → 打开系统文件对话框。 */
+async function browseProgram() {
+  pickingProgram.value = false;
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    // 不给起点时 Windows / Linux 会落在「文档」，在那儿根本找不到编辑器
+    const def = await api.programPickerDefault();
+    const picked = await open({
+      multiple: true,
+      title: "选择编辑器程序",
+      defaultPath: def.dir ?? undefined,
+      filters: def.extensions.length
+        ? [{ name: "程序", extensions: def.extensions }]
+        : undefined,
+    });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    let added = 0;
+    for (const path of paths) {
+      if (app.addProgram(programLabel(path), commandForProgram(path))) added += 1;
+    }
+    if (added) msg.success(added === 1 ? "已添加" : `已添加 ${added} 个程序`);
+    else msg.info("这些程序已经在列表里了");
+  } catch (e) {
+    msg.error(api.errText(e));
+  }
+}
 const saved = ref(false);
 
 /** 作者与项目地址（纯展示信息，点开走系统浏览器）。 */
@@ -209,11 +265,13 @@ onMounted(async () => {
     // IPC 失败保留 system 项，下拉仍可用
   }
   try {
-    editors.value = await api.editorOptions();
-    if (!editors.value.some((e) => e.id === app.editor)) app.editor = "idea";
+    catalog.value = await api.editorOptions();
+    // 旧配置里预设名可能只存了 id（如 idea），用正式名字覆盖一遍
+    app.applyEditorLabels(catalog.value);
   } catch {
-    // 探测失败保留 IDEA，按钮点击时后端仍会给出明确原因
+    // 探测失败只影响候选列表与文案，已配置的仍可正常打开
   }
+  void checkPrograms();
 });
 
 async function refreshGl() {
@@ -317,24 +375,58 @@ async function clearToken() {
     </NCard>
 
     <NCard size="small" class="card" title="用编辑器打开">
-      <div class="form">
-        <label>默认编辑器</label>
-        <NSelect v-model:value="app.editor" :options="editorOpts" />
-        <template v-if="app.editor === 'custom'">
-          <label>自定义命令</label>
-          <NInput
-            v-model:value="app.editorCommand"
-            size="small"
-            placeholder="例如：idea {path}"
-            :input-props="NO_AUTO"
-          />
-        </template>
-      </div>
-      <p class="muted small">
-        模块/仓库旁边的「用编辑器打开」用它，默认 IntelliJ IDEA；编辑器已开着会切到对应窗口。
-        自定义命令里的 <code>{path}</code> 会替换成目录（没写就追加在末尾），由系统 shell 执行。
+      <p class="muted small ed-note">
+        按下面的顺序出现在「用编辑器打开」菜单里（可上移 / 下移）。只加一个时点按钮直接打开；
+        一个都没加时点按钮会提示来这里添加。
       </p>
+
+      <div v-if="app.editors.length" class="ed-list">
+        <div v-for="(e, i) in app.editors" :key="e.key" class="ed-row">
+          <div class="ed-main">
+            <div class="ed-name">
+              {{ displayLabel(e) }}
+              <NTag v-if="missing[i]" size="tiny" type="error" :bordered="false" class="ml">
+                已卸载
+              </NTag>
+            </div>
+            <div v-if="e.command" class="ed-path mono">{{ e.command }}</div>
+          </div>
+          <div class="ed-ops">
+            <NButton size="tiny" secondary :disabled="i === 0" @click="app.moveEditor(i, -1)">
+              上移
+            </NButton>
+            <NButton
+              size="tiny"
+              secondary
+              :disabled="i === app.editors.length - 1"
+              @click="app.moveEditor(i, 1)"
+            >
+              下移
+            </NButton>
+            <NButton size="tiny" secondary type="error" @click="app.removeEditor(e.key)">
+              移除
+            </NButton>
+          </div>
+        </div>
+      </div>
+      <p v-else class="muted small ed-note">还没有添加编辑器程序。</p>
+
+      <div class="ed-add">
+        <NButton size="small" type="primary" secondary @click="pickingProgram = true">
+          选择程序…
+        </NButton>
+        <span class="muted small">从已安装的程序里挑，选中就记住，不用填命令。</span>
+      </div>
+
+      <p class="muted small ed-note">编辑器已经开着时会被切到对应窗口。</p>
     </NCard>
+
+    <ProgramPicker
+      v-if="pickingProgram"
+      @pick="pickProgram"
+      @browse="browseProgram"
+      @close="pickingProgram = false"
+    />
 
     <NCard size="small" class="card" title="快捷入口">
       <p class="muted small note">
@@ -753,6 +845,54 @@ async function clearToken() {
 /* 同步 / 更新结果与按钮拉开距离，否则提示条贴着按钮 */
 .mt {
   margin-top: 12px;
+}
+/* ── 常用编辑器列表 ── */
+.ed-list {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ed-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid rgba(128, 128, 128, 0.22);
+  border-radius: 8px;
+}
+.ed-main {
+  flex: 1;
+  min-width: 0;
+}
+.ed-name {
+  font-size: 13px;
+  margin-bottom: 2px;
+}
+.ed-name .ml {
+  margin-left: 6px;
+}
+/* 记住的实际命令：给人核对「加的是不是这个程序」，长路径要能换行 */
+.ed-path {
+  font-size: 11px;
+  color: #888;
+  overflow-wrap: anywhere;
+}
+.ed-ops {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.ed-add {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ed-note {
+  margin-top: 8px;
 }
 /* 要人敲的那条命令：等宽 + 可整条选中 */
 .cmd {

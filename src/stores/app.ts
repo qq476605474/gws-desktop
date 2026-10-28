@@ -6,6 +6,14 @@ import { ref, watch } from "vue";
 import { load, Store } from "@tauri-apps/plugin-store";
 
 import * as api from "../bridge";
+import {
+  CUSTOM_ID,
+  newEditorKey,
+  normalizeEditors,
+  withCatalogLabels,
+  type EditorCatalogItem,
+  type EditorEntry,
+} from "../lib/editors";
 import type { EnvRow, HubInfo, RepoRow, WsRow } from "../types";
 
 export type Theme = "light" | "dark";
@@ -36,10 +44,11 @@ export const useAppStore = defineStore("app", () => {
   // ── 偏好（存本地文件，不进 hub） ──
   const theme = ref<Theme>("light");
   const terminal = ref<string>("system");
-  /** 「用编辑器打开」用哪个：默认 IDEA（用户指定的默认值）。 */
-  const editor = ref<string>("idea");
-  /** 选「自定义命令」时的命令模板（`{path}` 占位）。 */
-  const editorCommand = ref<string>("");
+  /**
+   * 常用编辑器（有序）：点「用编辑器打开」时按这个顺序列出来。
+   * 空 = 一个都没配（按钮会提示去设置里添加）。
+   */
+  const editors = ref<EditorEntry[]>([]);
   let store: Store | null = null;
   let initPromise: Promise<void> | null = null;
 
@@ -49,14 +58,22 @@ export const useAppStore = defineStore("app", () => {
       store = await load("settings.json", { autoSave: true });
       theme.value = (await store.get<Theme>("theme")) ?? "light";
       terminal.value = (await store.get<string>("terminal")) ?? "system";
-      editor.value = (await store.get<string>("editor")) ?? "idea";
-      editorCommand.value = (await store.get<string>("editorCommand")) ?? "";
-      watch([theme, terminal, editor, editorCommand], async () => {
-        await store?.set("theme", theme.value);
-        await store?.set("terminal", terminal.value);
-        await store?.set("editor", editor.value);
-        await store?.set("editorCommand", editorCommand.value);
-      });
+      // 不迁移旧版的单编辑器配置：常用编辑器列表由用户自己「选择程序」建立，
+      // 新装 / 未配置时就是空的（否则会莫名为用户选一个编辑器）。
+      editors.value = normalizeEditors(await store.get<unknown>("editors"));
+      watch(
+        [theme, terminal, editors],
+        async () => {
+          await store?.set("theme", theme.value);
+          await store?.set("terminal", terminal.value);
+          // 去掉响应式代理再落盘，避免把 Vue 内部字段一起写进去
+          await store?.set(
+            "editors",
+            editors.value.map((e) => ({ ...e })),
+          );
+        },
+        { deep: true },
+      );
     })();
     try {
       await initPromise;
@@ -65,6 +82,45 @@ export const useAppStore = defineStore("app", () => {
       initPromise = null;
       throw e;
     }
+  }
+
+  /**
+   * 记住一个选中的程序。同一个程序不重复添加（重复了菜单里会出现两条一样的）。
+   *
+   * `label` 只用于显示，真正执行的是 `command`。
+   */
+  function addProgram(label: string, command: string): boolean {
+    const cmd = command.trim();
+    if (!cmd) return false;
+    if (editors.value.some((e) => e.command.trim() === cmd)) return false;
+    editors.value.push({
+      key: newEditorKey(),
+      id: CUSTOM_ID,
+      label: label.trim() || "未命名程序",
+      command: cmd,
+    });
+    return true;
+  }
+
+  function removeEditor(key: string): void {
+    editors.value = editors.value.filter((e) => e.key !== key);
+  }
+
+  /** 上移 / 下移：交换顺序就是菜单顺序。 */
+  function moveEditor(index: number, delta: number): void {
+    const to = index + delta;
+    if (index < 0 || index >= editors.value.length || to < 0 || to >= editors.value.length) {
+      return;
+    }
+    const list = editors.value.slice();
+    const [item] = list.splice(index, 1);
+    list.splice(to, 0, item);
+    editors.value = list;
+  }
+
+  /** 用后端目录里的正式名字覆盖预设条目的显示名（旧配置里存的是 id）。 */
+  function applyEditorLabels(catalog: EditorCatalogItem[]): void {
+    editors.value = withCatalogLabels(editors.value, catalog);
   }
 
   function setHub(info: HubInfo | null) {
@@ -136,9 +192,12 @@ export const useAppStore = defineStore("app", () => {
     refreshing,
     theme,
     terminal,
-    editor,
-    editorCommand,
+    editors,
     init,
+    addProgram,
+    removeEditor,
+    moveEditor,
+    applyEditorLabels,
     reposTab,
     setHub,
     refreshAll,

@@ -51,7 +51,36 @@ const loadError = ref("");
 
 const free = () => !props.branch;
 
+/** 探测失败时按「可用」处理：走原流程，真实错误会显示在弹窗里。 */
+async function paseoReady(): Promise<boolean> {
+  try {
+    return await api.paseoAvailable();
+  } catch {
+    return true;
+  }
+}
+
 async function open() {
+  // 没装 Paseo 就不必打开弹窗（弹了也只能报错）：把 hub 目录复制出去，
+  // 让用户粘到别的 AI 平台当工作目录，同时说清这个功能依赖 Paseo。
+  if (!(await paseoReady())) {
+    const root = app.hub?.root ?? "";
+    if (root) {
+      try {
+        await api.copyText(root);
+      } catch {
+        // 复制失败也别挡着提示；提示里会带上路径，可以手动复制
+      }
+    }
+    msg.warning(
+      root
+        ? "没检测到 Paseo（这个功能依赖它）。已复制 hub 目录，可粘贴到其他 AI 平台的「工作目录」；装好 Paseo 后即可一键开会话。"
+        : "没检测到 Paseo（这个功能依赖它）。装好 Paseo 后即可一键开会话。",
+      { duration: 12000 },
+    );
+    return;
+  }
+
   show.value = true;
   providers.value = [];
   provider.value = "";

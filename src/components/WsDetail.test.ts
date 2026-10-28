@@ -133,7 +133,22 @@ vi.mock("../bridge", async (importOriginal) => {
       problems: [],
       notice: [],
     }),
-    // 开Paseo会话：先列 provider，选一个（默认第一个）再启动
+    // 合并到环境：结果里要能直接打开环境里的那份代码
+    wsMerge: vi.fn().mockResolvedValue({
+      env: "dev",
+      stale: [],
+      pending: [],
+      clean: ["demo-api"],
+      skipped: [],
+      conflicts: [],
+      conflict_dirs: {},
+      pushed: [],
+      push_failed: [],
+      did_push: false,
+      branches: {},
+    }),
+    // 开Paseo会话：先探测 paseo 是否可用，再列 provider，选一个（默认第一个）再启动
+    paseoAvailable: vi.fn().mockResolvedValue(true),
     paseoProviders: vi.fn().mockResolvedValue(["claude", "qoder"]),
     paseoOpenSession: vi.fn().mockResolvedValue({
       branch: BRANCH,
@@ -314,6 +329,50 @@ describe("快捷入口", () => {
 
     const btn = w.findAll("button").find((b) => b.text().trim() === "快捷入口");
     expect(btn, "没配快捷入口时不该有「发布」按钮").toBeFalsy();
+  });
+});
+
+describe("合并到环境后直接打开目录", () => {
+  it("结果里给出环境目录；有冲突时按钮写「用编辑器解决冲突」", async () => {
+    // 实测反馈：解冲突 / 推之前 review 得先切到「环境」页找同一个目录，
+    // 很容易找错。合并结果里直接给出入口。
+    (api.wsMerge as ReturnType<typeof vi.fn>).mockResolvedValue({
+      env: "dev",
+      stale: [],
+      pending: [],
+      clean: [],
+      skipped: [],
+      conflicts: ["demo-api"],
+      conflict_dirs: { "demo-api": "/tmp/hub/envs/dev/demo-api" },
+      pushed: [],
+      push_failed: [],
+      did_push: false,
+      branches: {},
+    });
+
+    const w = mountDetail();
+    await flush();
+    await w.vm.$nextTick();
+
+    const btn = w.findAll("button").find((b) => b.text().trim() === "合并到环境");
+    expect(btn, "该有「合并到环境」按钮").toBeTruthy();
+    await btn!.trigger("click");
+    await w.vm.$nextTick();
+
+    const run = w.findAll("button").find((b) => b.text().trim() === "执行");
+    expect(run, "操作弹窗里该有「执行」").toBeTruthy();
+    await run!.trigger("click");
+    await flush();
+    await w.vm.$nextTick();
+    await flush();
+    await w.vm.$nextTick();
+
+    expect(w.find(".dirs").exists(), "结果里要列出可打开的目录").toBe(true);
+    expect(w.text()).toContain("冲突待处理");
+    // 批量 review / 批量解冲突时开一个总目录就够了
+    expect(w.text(), "要有整个环境的总入口").toContain("dev（整个环境）");
+    const labels = w.findAll(".dirs button").map((b) => b.text().trim());
+    expect(labels).toContain("用编辑器解决冲突");
   });
 });
 

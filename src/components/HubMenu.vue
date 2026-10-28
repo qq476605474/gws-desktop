@@ -3,7 +3,8 @@
 //!
 //! 实测反馈：以前「改名」是名字旁一个很淡的铅笔、「切换 hub」是左下角单独
 //! 一行的裸链接，左上角还被更新提示挤成两行大胶囊，又乱又丑。
-//! 现在低频操作统一收进 hub 名字的菜单：改个名字 / 切换 hub / 打开 hub 目录。
+//! 现在低频操作统一收进 hub 名字的菜单：改个名字 / 切换 hub / 打开 hub 目录 /
+//! 复制 hub 目录（后者给用别的 AI 平台的人：把路径粘过去当工作目录）。
 //!
 //! # 为什么整块放在子组件里
 //!
@@ -17,11 +18,13 @@ import { ref } from "vue";
 
 import * as api from "../bridge";
 import { openInFinder } from "../bridge";
+import { useCopy } from "../lib/copy";
 import { NO_AUTO } from "../lib/inputs";
 import { useAppStore } from "../stores/app";
 
 const app = useAppStore();
 const msg = useMessage();
+const copy = useCopy();
 
 const showRename = ref(false);
 const draft = ref("");
@@ -33,6 +36,8 @@ const options: DropdownOption[] = [
   // 「访达」是 Mac 专有词；「打开文件管理器」又容易被理解成只启动应用。
   // 叫「打开 hub 目录」最准确：打开的就是当前 hub 这个目录（各平台各自的文件管理器）。
   { label: "打开 hub 目录", key: "open-root" },
+  // 给不用 Paseo 的人：把 hub 路径粘到别的 AI 平台的「工作目录」里开对话。
+  { label: "复制 hub 目录", key: "copy-root" },
 ];
 
 function onSelect(key: string | number) {
@@ -51,6 +56,7 @@ function onSelect(key: string | number) {
     return;
   }
   if (k === "open-root" && app.hub) void openInFinder(app.hub.root);
+  if (k === "copy-root" && app.hub) void copy(app.hub.root, "hub 目录");
 }
 
 async function save() {
@@ -79,8 +85,8 @@ async function save() {
       type="button"
       class="hub-trigger"
       aria-haspopup="menu"
-      :aria-label="`${app.hub?.name ?? '当前 hub'}：改名、切换 hub、打开目录`"
-      :title="`${app.hub?.root ?? ''}（点开：改名 / 切换 hub / 打开目录）`"
+      :aria-label="`${app.hub?.name ?? '当前 hub'}：改名、切换 hub、打开或复制目录`"
+      :title="`${app.hub?.root ?? ''}（点开：改名 / 切换 hub / 打开或复制目录）`"
     >
       <span class="hub-name">{{ app.hub?.name }}</span>
       <svg class="chev" viewBox="0 0 12 12" aria-hidden="true">

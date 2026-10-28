@@ -50,6 +50,48 @@ beforeEach(() => {
 
 afterEach(() => vi.useRealTimers());
 
+describe("常用编辑器配置", () => {
+  it("同一个程序不能重复添加，空命令不接受", () => {
+    const a = store();
+    expect(a.addProgram("IntelliJ IDEA", 'open -a "/Applications/IntelliJ IDEA.app"')).toBe(true);
+    expect(a.addProgram("IntelliJ IDEA", 'open -a "/Applications/IntelliJ IDEA.app"')).toBe(false);
+    expect(a.addProgram("空", "")).toBe(false);
+    expect(a.addProgram("Zed", '"/Applications/Zed.app"')).toBe(true);
+    expect(a.editors.map((e) => e.label)).toEqual(["IntelliJ IDEA", "Zed"]);
+    // 每条 key 都不一样，否则重排/删除会串
+    expect(new Set(a.editors.map((e) => e.key)).size).toBe(2);
+  });
+
+  it("上移 / 下移交换顺序，越界不动", () => {
+    const a = store();
+    a.addProgram("IntelliJ IDEA", "idea");
+    a.addProgram("Zed", "zed");
+    a.addProgram("Rebased", "rebased");
+
+    a.moveEditor(2, -1);
+    expect(a.editors.map((e) => e.label)).toEqual(["IntelliJ IDEA", "Rebased", "Zed"]);
+
+    a.moveEditor(0, -1);
+    a.moveEditor(2, 1);
+    expect(a.editors.map((e) => e.label)).toEqual(["IntelliJ IDEA", "Rebased", "Zed"]);
+  });
+
+  it("按 key 移除，并可用后端目录修正旧预设的显示名", () => {
+    const a = store();
+    a.addProgram("IntelliJ IDEA", "idea");
+    a.addProgram("Zed", "zed");
+    const removeKey = a.editors[0].key;
+
+    a.removeEditor(removeKey);
+    expect(a.editors.map((e) => e.label)).toEqual(["Zed"]);
+
+    // 旧配置里可能只剩 id；设置页初始化时用后端目录把名字补全
+    a.editors = [{ key: "legacy", id: "zed", label: "zed", command: "" }];
+    a.applyEditorLabels([{ id: "zed", label: "Zed Editor" }]);
+    expect(a.editors[0].label).toBe("Zed Editor");
+  });
+});
+
 describe("列表刷新", () => {
   it("成功后 refreshTick 加一（打开着的详情页靠它重读）", async () => {
     const app = store();

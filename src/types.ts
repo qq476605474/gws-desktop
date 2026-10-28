@@ -626,6 +626,19 @@ export interface EditorOption {
   installed: boolean;
 }
 
+/** 「选择程序」对话框的起点目录与可执行文件过滤（按平台给）。 */
+export interface ProgramPickerDefault {
+  dir: string | null;
+  extensions: string[];
+}
+
+/** 本机已安装的程序（macOS 读 `.app`、Windows 读开始菜单、Linux 读 `.desktop`）。 */
+export interface InstalledApp {
+  name: string;
+  /** 存进编辑器配置的命令模板。 */
+  command: string;
+}
+
 // ── 发布地址 ──────────────────────────────────────────────────────────
 
 export interface EnvAddress {

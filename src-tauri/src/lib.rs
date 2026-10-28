@@ -4,6 +4,7 @@
 //! 的变化：旧版需要一个装在 PATH 里的 bash 脚本，Windows 上还得靠 Git Bash
 //! 解释执行；本版把这些整类问题从根上消除（设计方案 §1.3）。
 
+pub mod apps;
 pub mod commands;
 pub mod platform;
 
@@ -109,6 +110,7 @@ pub fn run() {
             commands::mr::mr_reviewers,
             commands::mr::mr_save_reviewers,
             // Paseo（在 hub 根目录开 AI 会话）
+            commands::paseo::paseo_available,
             commands::paseo::paseo_providers,
             commands::paseo::paseo_open_session,
             commands::paseo::paseo_open_free_session,
@@ -170,6 +172,9 @@ pub fn run() {
             platform::terminal_options,
             platform::open_in_editor,
             platform::editor_options,
+            platform::editor_programs_missing,
+            platform::program_picker_default,
+            apps::installed_apps,
             platform::read_text_file,
             platform::list_dir,
             platform::list_entries,

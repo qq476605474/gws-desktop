@@ -21,7 +21,7 @@ import { openInFinder, openInTerminal, openUrl } from "../bridge";
 import { useAppStore } from "../stores/app";
 import { withBusy } from "../busy";
 import * as fmt from "../format";
-import OpDialog, { type OpPayload } from "./OpDialog.vue";
+import OpDialog, { type OpDir, type OpPayload, type OpResult } from "./OpDialog.vue";
 import ActionResult from "./ActionResult.vue";
 import LinkEditor from "./LinkEditor.vue";
 import BaseEditor from "./BaseEditor.vue";
@@ -38,7 +38,7 @@ import { nodesFromFiles } from "../lib/docTree";
 import DangerDialog from "./DangerDialog.vue";
 import { gitlabBranchUrl, moduleRepos, outcomeKind, outcomeReason } from "../types";
 import { baseChainLabel, hasBase } from "../lib/base";
-import type { Link, ModuleStatus, Outcome, RemoteProbe, WsDetail as Detail, WsShell } from "../types";
+import type { Link, MergeOutcome, ModuleStatus, Outcome, RemoteProbe, WsDetail as Detail, WsShell } from "../types";
 
 /** 文档库的名字。多处用到，写一次。 */
 /** 文档库在 hub 里的目录名 —— 从 hub 配置读，别写死（用户填什么就叫什么）。 */
@@ -497,34 +497,75 @@ const probeText = computed(() =>
   probeHits.value.map((p) => `${p.module} 落后 ${p.behind}`).join("、"),
 );
 
-async function runOp(p: OpPayload): Promise<string[]> {
+/**
+ * 合并结果里**可以直接打开的目录**。
+ *
+ * 合完之后要 review 再决定推不推、出了冲突要解 —— 原来只打印路径，人还得
+ * 切到「环境」页找同一个目录（实测反馈）。这里把「合过的模块」都列出来，
+ * 冲突的标出来，右边直接给编辑器按钮。
+ */
+function mergedDirs(o: MergeOutcome): OpDir[] {
+  const root = app.hub?.root;
+  if (!root) return [];
+  const mods = new Set<string>([
+    ...o.clean,
+    ...o.conflicts,
+    ...o.pending.map(([m]) => m),
+  ]);
+  // **整个环境目录放第一个**：需要批量 review / 批量解冲突时，在 Rebased、IDEA
+  // 里开这一个目录就够了，不用逐个模块开（实测反馈）。
+  return [
+    {
+      path: `${root}/envs/${o.env}`,
+      label: `${o.env}（整个环境）`,
+      note: o.conflicts.length ? `${o.conflicts.length} 个模块有冲突` : undefined,
+    },
+    ...[...mods].map((m) => ({
+      path: `${root}/envs/${o.env}/${m}`,
+      label: m,
+      note: o.conflicts.includes(m) ? "冲突待处理" : undefined,
+    })),
+  ];
+}
+
+async function runOp(p: OpPayload): Promise<string[] | OpResult> {
   const only = p.modules;
   const filter = { only };
+  // 期间显示进度遮罩：这几个操作逐个模块 fetch/merge，主线程不阻塞之后
+  // 遮罩上的进度条会随 core 上报的进度走（实测反馈：原来只是卡住不动）。
+  const label =
+    op.value === "merge"
+      ? `合并到环境 ${p.env ?? "dev"}`
+      : op.value === "push-env"
+        ? `合并并推送到环境 ${p.env ?? "dev"}`
+        : opTitle.value || "执行中";
 
-  switch (op.value) {
-    case "push":
-      return fmt.pushLines(await api.wsPush(branch.value, filter));
-    // 拉取方式由弹窗里的勾选决定（反馈 #23：Pull --rebase 是需要的，
-    // 但 rebase 会改写本地提交顺序，得让人显式选并看到代价说明）
-    case "pull":
-      return fmt.pullLines(await api.wsPull(branch.value, p.rebase, filter));
-    // 合并与「合并到环境并推送」合成一个入口，推不推在弹窗里勾（反馈 #4）。
-    // 默认不推——推了远程上立刻可见，该由人显式选。
-    case "merge":
-      return fmt.mergeLines(
-        await api.wsMerge(branch.value, p.env ?? "dev", p.push, p.force, filter),
-      );
-    case "push-env":
-      // 与「合并到环境」**同一个操作**，区别只在弹窗里「合并后推送」默认勾上。
-      // 合过去再推，正是「合并到环境并推送」的语义。
-      return fmt.mergeLines(
-        await api.wsMerge(branch.value, p.env ?? "dev", p.push, p.force, filter),
-      );
-    case "sync-main":
-      return fmt.syncMainLines(await api.wsSyncMain(branch.value, [], filter));
-    default:
-      return ["（未知操作）"];
-  }
+  return withBusy(label, async (): Promise<string[] | OpResult> => {
+    switch (op.value) {
+      case "push":
+        return fmt.pushLines(await api.wsPush(branch.value, filter));
+      // 拉取方式由弹窗里的勾选决定（反馈 #23：Pull --rebase 是需要的，
+      // 但 rebase 会改写本地提交顺序，得让人显式选并看到代价说明）
+      case "pull":
+        return fmt.pullLines(await api.wsPull(branch.value, p.rebase, filter));
+      // 合并与「合并到环境并推送」合成一个入口，推不推在弹窗里勾（反馈 #4）。
+      // 默认不推——推了远程上立刻可见，该由人显式选。
+      case "merge": {
+        const o = await api.wsMerge(branch.value, p.env ?? "dev", p.push, p.force, filter);
+        return { lines: fmt.mergeLines(o), dirs: mergedDirs(o) };
+      }
+      case "push-env": {
+        // 与「合并到环境」**同一个操作**，区别只在弹窗里「合并后推送」默认勾上。
+        // 合过去再推，正是「合并到环境并推送」的语义。
+        const o = await api.wsMerge(branch.value, p.env ?? "dev", p.push, p.force, filter);
+        return { lines: fmt.mergeLines(o), dirs: mergedDirs(o) };
+      }
+      case "sync-main":
+        return fmt.syncMainLines(await api.wsSyncMain(branch.value, [], filter));
+      default:
+        return ["（未知操作）"];
+    }
+  });
 }
 
 async function afterOp() {

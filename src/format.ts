@@ -82,7 +82,9 @@ export function mergeLines(o: MergeOutcome): string[] {
       if (dir) out.push(`      ${dir}`);
     }
     out.push("");
-    out.push(`  用 IDE 打开上述目录解决冲突，然后重新点一次「合并到 ${o.env}」收尾`);
+    out.push(
+      `  下面可直接用编辑器打开对应目录解决冲突，然后重新点一次「合并到 ${o.env}」收尾`,
+    );
     return out;
   }
 

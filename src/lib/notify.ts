@@ -26,3 +26,9 @@ export function notifyError(text: string): void {
   if (impl) impl.error(text);
   else console.error(text);
 }
+
+/** 弹一条提醒（不阻断操作，例如「还没配置常用编辑器」）。 */
+export function notifyWarning(text: string): void {
+  if (impl) impl.warning(text);
+  else console.warn(text);
+}

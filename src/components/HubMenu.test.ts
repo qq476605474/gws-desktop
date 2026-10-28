@@ -20,6 +20,7 @@ vi.mock("../bridge", async (importOriginal) => {
     ...actual,
     openInFinder: vi.fn().mockResolvedValue(undefined),
     hubRename: vi.fn(),
+    copyText: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -84,7 +85,7 @@ async function clickOption(w: ReturnType<typeof mountMenu>["w"], label: string) 
 beforeEach(() => vi.clearAllMocks());
 
 describe("hub 菜单", () => {
-  it("名字本身就是入口：显示 hub 名，点开有三项低频操作", async () => {
+  it("名字本身就是入口：显示 hub 名，点开有四项低频操作", async () => {
     const { w } = mountMenu();
     const trigger = w.find(".hub-trigger");
     expect(trigger.text()).toContain("测试 hub");
@@ -97,8 +98,16 @@ describe("hub 菜单", () => {
     expect(text.join("|")).toContain("改个名字");
     expect(text.join("|")).toContain("切换 hub");
     expect(text.join("|")).toContain("打开 hub 目录");
+    expect(text.join("|")).toContain("复制 hub 目录");
     // 「访达」是 Mac 专有词，不该出现在菜单里
     expect(text.join("|")).not.toContain("访达");
+  });
+
+  it("「复制 hub 目录」把 hub 根目录写进剪贴板", async () => {
+    const { w } = mountMenu();
+    await openMenu(w);
+    await clickOption(w, "复制 hub 目录");
+    expect((api.copyText as ReturnType<typeof vi.fn>).mock.calls[0]).toEqual([HUB.root]);
   });
 
   it("「打开 hub 目录」调 openInFinder，路径是 hub 根目录", async () => {

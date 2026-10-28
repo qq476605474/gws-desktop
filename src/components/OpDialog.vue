@@ -8,6 +8,7 @@ import { ref, watch } from "vue";
 import { NAlert, NButton, NCheckbox, NModal, NSelect, useMessage } from "naive-ui";
 
 import ModulePicker from "./ModulePicker.vue";
+import EditorButton from "./EditorButton.vue";
 import type { EnvRow, ModuleStatus } from "../types";
 
 export interface OpPayload {
@@ -16,6 +17,23 @@ export interface OpPayload {
   push: boolean;
   force: boolean;
   rebase: boolean;
+}
+
+/** 结果里附带的一个可打开目录（合并到环境后要 review / 解冲突）。 */
+export interface OpDir {
+  path: string;
+  label: string;
+  /** 一句状态说明，如「冲突待处理」。 */
+  note?: string;
+}
+
+/**
+ * 执行结果。除了文本行，还可以带一组目录 ——
+ * 原来合并出冲突只打印路径，还得人自己切到「环境」页去找（实测反馈）。
+ */
+export interface OpResult {
+  lines: string[];
+  dirs?: OpDir[];
 }
 
 const props = defineProps<{
@@ -57,7 +75,7 @@ const props = defineProps<{
    * 实际执行。**抽成函数 prop 而不是 emit**：操作与它需要的参数在父组件那边
    * 是天然绑在一起的，用 emit 得把一个 promise 结果再传回来，反而绕。
    */
-  action: (p: OpPayload) => Promise<string[]>;
+  action: (p: OpPayload) => Promise<string[] | OpResult>;
 }>();
 
 const emit = defineEmits<{ (e: "close"): void; (e: "done"): void }>();
@@ -71,6 +89,8 @@ const rebase = ref(false);
 const running = ref(false);
 /** 执行结果（每行一条）。`null` = 还没执行。 */
 const result = ref<string[] | null>(null);
+/** 结果里附带的目录：合完可以直接打开检查或解冲突。 */
+const dirs = ref<OpDir[]>([]);
 
 // 默认全选：不做「自动只选有改动的」，理由见 ModulePicker 的注释。
 // 但父组件如果明确指出了「就是这几个模块」，那就只勾那几个（反馈 #2）。
@@ -103,16 +123,25 @@ async function run() {
   }
   running.value = true;
   try {
-    result.value = await props.action({
+    const out = await props.action({
       modules: selected.value,
       env: env.value,
       push: push.value,
       force: force.value,
       rebase: rebase.value,
     });
+    // 两种返回都接受：老操作只给文本行，合并这类会额外给可打开目录
+    if (Array.isArray(out)) {
+      result.value = out;
+      dirs.value = [];
+    } else {
+      result.value = out.lines;
+      dirs.value = out.dirs ?? [];
+    }
   } catch (e) {
     // 失败也停下来展示，而不是弹个 toast 就没了——用户需要看到完整原因
     result.value = [`✗ ${String((e as { message?: string })?.message ?? e)}`];
+    dirs.value = [];
   } finally {
     running.value = false;
   }
@@ -168,6 +197,18 @@ async function run() {
 
     <div v-if="result" class="result">
       <div v-for="(l, i) in result" :key="i">{{ l }}</div>
+    </div>
+
+    <!-- 结果里给目录的操作（合并到环境）：**不用再去环境页找同一个目录** -->
+    <div v-if="dirs.length" class="dirs">
+      <div v-for="d in dirs" :key="d.path" class="dir-row">
+        <span class="mono small">{{ d.label }}</span>
+        <span v-if="d.note" class="dir-note" :class="{ bad: d.note.includes('冲突') }">
+          {{ d.note }}
+        </span>
+        <span class="spacer" />
+        <EditorButton size="tiny" :path="d.path" :label="d.note?.includes('冲突') ? '用编辑器解决冲突' : '用编辑器打开'" />
+      </div>
     </div>
 
     <template #footer>
@@ -246,5 +287,32 @@ async function run() {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.dirs {
+  margin-top: 10px;
+  border: 1px solid var(--xg-border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  max-height: 180px;
+  overflow: auto;
+}
+.dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.dir-row + .dir-row {
+  border-top: 1px solid var(--xg-border);
+}
+.dir-note {
+  font-size: 12px;
+  color: #888;
+}
+.dir-note.bad {
+  color: #d03050;
+}
+.spacer {
+  flex: 1;
 }
 </style>

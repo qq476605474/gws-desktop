@@ -55,6 +55,15 @@ pub struct PaseoSession {
     pub message: String,
 }
 
+/// Paseo CLI 是否可用（「开 AI 会话」的前置探测）。
+///
+/// 没装时前端不必弹 provider 弹窗（弹了也只能报错），而是复制 hub 目录并提示
+/// 去安装 —— 那条路径可以直接粘到别的 AI 平台当工作目录。
+#[tauri::command]
+pub fn paseo_available() -> bool {
+    find_paseo().is_some()
+}
+
 /// 可选的 Paseo provider（`status=available` 且 `enabled=Enabled`）。
 ///
 /// 前端弹窗要求**必选**：`paseo run` 不传 `--provider` 会直接报
@@ -467,7 +476,7 @@ fn session_cwd(hub: &gws_core::Hub) -> PathBuf {
 /// 目录语义、只读边界、提交约定都在 hub 根目录的 `AGENTS.md` 里，AI 自己会读 ——
 /// 塞进 prompt 只会变成一段每次都要复述的啰嗦话（实测反馈）。
 fn session_prompt(branch: &str) -> String {
-    format!("当前需求分支：`{branch}`。直接开始，不用复述这些信息。")
+    format!("当前需求分支：`{branch}`。直接开始，不用复述我知道的信息，等待我下达指示。")
 }
 
 /// 自由会话（还没绑定需求）的开场说明。
@@ -475,7 +484,7 @@ fn session_prompt(branch: &str) -> String {
 /// 实测需求：先聊清需求再建需求、或直接查线上日志定位 bug；这类会话没有分支，
 /// 所以不能套 `session_prompt`（那会让 AI 去找一个不存在的 `ws/<分支>`）。
 fn free_prompt() -> String {
-    "这是一个还没绑定需求的自由会话。直接开始，不用复述项目信息。".to_string()
+    "这是一个还没绑定需求的自由会话。直接开始，不用复述我知道的信息，等待我下达指示。".to_string()
 }
 
 /// `paseo run` 的参数。**有可复用工作区时不再传 `--cwd`** —— 工作区已经绑定了

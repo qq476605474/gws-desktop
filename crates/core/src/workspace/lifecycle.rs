@@ -615,6 +615,7 @@ pub fn add_modules(hub: &Hub, ws: &mut Workspace, modules: &[String]) -> Result<
     // 依据实际存在的模块目录回写列表（可能有模块之前被手工删掉）
     sync_modules(ws);
     ws.save_meta()?;
+    sync_doc_meta(hub, ws);
 
     Ok(results)
 }
@@ -644,6 +645,7 @@ pub fn drop_module(hub: &Hub, ws: &mut Workspace, module: &str, force: bool) -> 
 
     sync_modules(ws);
     ws.save_meta()?;
+    sync_doc_meta(hub, ws);
     Ok(Outcome::Ok)
 }
 
@@ -688,6 +690,7 @@ pub fn drop_missing_modules(hub: &Hub, ws: &mut Workspace) -> Result<DropMissing
 
     sync_modules(ws);
     ws.save_meta()?;
+    sync_doc_meta(hub, ws);
     Ok(DropMissingOutcome { cleaned, kept })
 }
 
@@ -704,6 +707,22 @@ pub struct DropMissingOutcome {
 pub fn sync_modules(ws: &mut Workspace) {
     let present = ws.scan_module_dirs();
     ws.meta_mut().modules = present;
+}
+
+/// 模块增删后，把「涉及模块 / 需求名」同步进期次 `meta.json`。
+///
+/// 失败**不影响**模块操作本身：模块已经加/减好了，文档元数据下次操作还有机会补。
+fn sync_doc_meta(hub: &Hub, ws: &Workspace) {
+    if ws.meta().doc.is_none() {
+        return;
+    }
+    if let Ok(dh) = crate::dochub::DocHub::ensure_local(hub) {
+        // 标题留空时是「用分支名兜底」，没有真名字可同步。
+        if !ws.meta().title.trim().is_empty() {
+            let _ = dh.sync_title(ws);
+        }
+        let _ = dh.sync_repos(ws);
+    }
 }
 
 // ══ 删除工作区 ═════════════════════════════════════════════════════════

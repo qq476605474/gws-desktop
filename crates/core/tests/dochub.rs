@@ -992,6 +992,34 @@ fn changing_the_title_updates_the_period_metadata() {
 }
 
 #[test]
+fn adding_or_dropping_a_module_updates_the_period_repos() {
+    let f = Fixture::new();
+    let dh = f.dochub();
+    let mut ws = f.create("feature-20261013-repos", "涉及模块");
+    dh.attach(&mut ws, None).unwrap();
+
+    let period = dh.period_dir(&ws);
+    let repos = |p: &std::path::Path| PeriodMeta::load(&p.join(META_FILE)).unwrap().repos;
+    assert_eq!(repos(&period), vec!["demo-api".to_string()]);
+
+    // 后来加了模块 → 文档页的「涉及模块」要跟着变（实测反馈：一直不变）
+    ws.meta_mut().modules.push("demo-web".into());
+    ws.save_meta().unwrap();
+    assert!(dh.sync_repos(&ws).unwrap());
+    assert_eq!(
+        repos(&period),
+        vec!["demo-api".to_string(), "demo-web".to_string()]
+    );
+    assert!(!dh.sync_repos(&ws).unwrap(), "没变就不写");
+
+    // 移除模块同样要跟上
+    ws.meta_mut().modules.retain(|m| m != "demo-api");
+    ws.save_meta().unwrap();
+    assert!(dh.sync_repos(&ws).unwrap());
+    assert_eq!(repos(&period), vec!["demo-web".to_string()]);
+}
+
+#[test]
 fn the_period_docs_are_regenerated_with_the_new_title() {
     let f = Fixture::new();
     let dh = f.dochub();

@@ -105,10 +105,11 @@ function go(id: string) {
             <code>ws/&lt;分支&gt;/.workspace.json</code> 里。
           </li>
           <li>
-            点左上角的 hub 名字会展开菜单：<strong>改个名字 / 切换 hub / 打开 hub 目录</strong>；
-            右边是当前版本号。换 hub 不会动磁盘上的任何文件。
+            点左上角的 hub 名字会展开菜单：<strong>改个名字 / 切换 hub / 打开 hub 目录 / 复制 hub 目录</strong>；
+            「复制」给用别的 AI 平台的人——把路径粘过去当工作目录即可。右边是当前版本号。
+            换 hub 不会动磁盘上的任何文件。
           </li>
-          <li>长操作（同步、拉取、合并）在底部显示进度；卡住时先看那里。</li>
+          <li>长操作（同步、拉取、合并、推送、同步基线）会弹进度框，逐个模块显示结果；看起来没动静时先看那里。</li>
         </ul>
       </NCard>
     </section>
@@ -183,7 +184,7 @@ function go(id: string) {
           </li>
           <li>
             每个模块：浏览文件、对比代码、GitLab、终端、打开目录、复制目录、
-            用编辑器打开（默认 IDEA，编辑器已开着会切到对应窗口）；
+            用编辑器打开（按设置里配置的常用编辑器列表，编辑器已开着会切到对应窗口）；
             文档库固定排在第一行，同样能浏览 / 对比，也能从本需求「移除」（只摘掉，不删文档）。
           </li>
         </ul>
@@ -252,6 +253,15 @@ function go(id: string) {
           <li>
             上次合了一半或冲突后想重来，勾「丢弃本地未推送的合并成果，从远程重新合」。
             冲突会列出模块和文件路径，解决后再点一次同一个按钮。
+          </li>
+          <li>
+            <strong>合完不用切页面</strong>：结果里直接列出发过合并的模块目录，右边
+            「用编辑器打开 / 用编辑器解决冲突」就能改代码；合并检查里每个模块也有同样入口。
+          </li>
+          <li>
+            <strong>整个环境的入口</strong>：结果列表第一行就是「dev（整个环境）」，合并检查的
+            工具栏也有「打开环境目录 / 用编辑器打开整个环境」。用 Rebased、IDEA 批量 review、
+            批量解冲突时直接打开环境根目录，不用一个个模块点。
           </li>
           <li>
             <strong>合并到环境检查</strong>：逐个模块显示成功 / 冲突 / 是否已推到远程。
@@ -436,6 +446,11 @@ function go(id: string) {
           </li>
           <li>需要本机已安装 Paseo，且 <code>paseo</code> 在 PATH 或 <code>~/.local/bin</code> 里。</li>
           <li>
+            <strong>没装 Paseo 时</strong>：点「开 AI 会话」不会弹 provider 弹窗，
+            而是<strong>自动复制 hub 目录</strong>并提示去安装——可以把这段路径粘到
+            别的 AI 平台（如 Cursor / Claude Code）的「工作目录」里直接对话。
+          </li>
+          <li>
             <strong>Windows：</strong>在 Paseo 桌面端「集成」→「CLI 文档」→「命令行」里
             安装 CLI，装到 <code>%USERPROFILE%\.local\bin\paseo.cmd</code>；
             <code>npm install -g @getpaseo/cli</code> 则装到
@@ -463,9 +478,11 @@ function go(id: string) {
         <ul>
           <li>主题（浅色 / 深色）；「打开终端」选跟随系统、iTerm、Terminal 等。</li>
           <li>
-            「用编辑器打开」默认 <strong>IntelliJ IDEA</strong>，可换成 WebStorm / PyCharm /
-            VS Code / Cursor / Qoder / Zed 等；没装的会标注「未安装」。
-            列表里没有的编辑器用「自定义命令」，例如 <code>idea {path}</code>。
+            「用编辑器打开」按<strong>常用编辑器列表</strong>来：点「选择程序…」从已安装的程序里挑
+            （macOS 的应用、Windows 的开始菜单、Linux 的应用列表都能直接选），
+            <strong>不用填任何命令</strong>，选中就记住（可多选）。
+            支持上移 / 下移调整顺序、移除；程序卸载后会在设置里标「已卸载」。
+            只加一个时点按钮直接打开；加多个时列出全部，点哪个用哪个；一个都没加会提示来这里添加。
           </li>
         </ul>
         <div class="sub">GitLab</div>

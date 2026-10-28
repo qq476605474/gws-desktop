@@ -1356,6 +1356,33 @@ pub fn month_family_name(created: &str) -> String {
         Ok(true)
     }
 
+    /// 改**涉及模块**：把工作区当前的模块列表写回期次元数据。
+    ///
+    /// 以前只在挂文档那一刻写一次，之后 `gws add` / `gws drop` 都不会跟着变，
+    /// 文档页上「涉及模块」就一直是建期次时的那几个（实测反馈）。
+    ///
+    /// 返回是否真的改了（`false` = 没挂文档 / 期次目录不在 / 列表没变）。
+    pub fn sync_repos(&self, ws: &Workspace) -> Result<bool> {
+        if ws.meta().doc.is_none() {
+            return Ok(false);
+        }
+        let path = self.period_dir(ws).join(META_FILE);
+        if !path.is_file() {
+            return Ok(false);
+        }
+        let mut m = PeriodMeta::load(&path)?;
+        // 去重后再比：旧数据里可能已经有重复项，顺手修掉。
+        let mut want = ws.meta().modules.clone();
+        let mut seen = std::collections::BTreeSet::new();
+        want.retain(|r| seen.insert(r.clone()));
+        if m.repos == want {
+            return Ok(false);
+        }
+        m.repos = want;
+        m.save(&path)?;
+        Ok(true)
+    }
+
     pub fn set_label(&self, ws: &Workspace, label: &str) -> Result<String> {
         let doc = ws
             .meta()

@@ -531,6 +531,15 @@ const EDITORS: &[EditorPreset] = &[
         vscode_like: true,
         cli: "windsurf",
     },
+    EditorPreset {
+        id: "rebased",
+        label: "Rebased",
+        // IntelliJ 平台的 Git 客户端：包内 launcher 就是 `rebased`
+        mac_apps: &["Rebased"],
+        mac_bin: "rebased",
+        vscode_like: false,
+        cli: "rebased",
+    },
 ];
 
 /// 没设置时用 IDEA（用户指定的默认值）。
@@ -651,20 +660,29 @@ fn resolve_editor(p: &EditorPreset) -> Option<Launcher> {
     }
     let local = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     let programs = std::env::var_os("ProgramFiles").map(PathBuf::from);
-    // 已知安装位置
-    let known: &[&str] = match p.id {
-        "vscode" => &["Programs/Microsoft VS Code/bin/code.cmd"],
-        "cursor" => &["Programs/cursor/resources/app/bin/cursor.cmd"],
-        "qoder" => &["Programs/Qoder/resources/app/bin/qoder.cmd"],
-        "windsurf" => &["Programs/Windsurf/bin/windsurf.cmd"],
-        "zed" => &["Programs/Zed/zed.exe"],
-        _ => &[],
-    };
-    for rel in known {
-        if let Some(root) = &local {
+    // 已知安装位置：winget 默认装到 ProgramFiles，部分安装器装到用户目录
+    for rel in windows_known_editor_paths(p.id) {
+        for root in [local.as_ref(), programs.as_ref()].into_iter().flatten() {
             let candidate = root.join(rel);
             if candidate.is_file() {
                 return Some(Launcher::Path(candidate));
+            }
+        }
+    }
+    // Rebased 是 IntelliJ 平台，目录布局可能带版本号，兜底递归找 launcher
+    if p.id == "rebased" {
+        let mut roots = Vec::new();
+        if let Some(root) = &programs {
+            roots.push(root.join("detachhead/Rebased"));
+        }
+        if let Some(root) = &local {
+            roots.push(root.join("Programs/Rebased"));
+        }
+        for root in roots {
+            for exe in ["rebased64.exe", "rebased.exe"] {
+                if let Some(found) = find_file_under(&root, exe, 4) {
+                    return Some(Launcher::Path(found));
+                }
             }
         }
     }
@@ -691,6 +709,28 @@ fn resolve_editor(p: &EditorPreset) -> Option<Launcher> {
     None
 }
 
+/// Windows 上的常见安装位置（相对 `%LOCALAPPDATA%` / `%ProgramFiles%`）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn windows_known_editor_paths(id: &str) -> &'static [&'static str] {
+    match id {
+        "vscode" => &["Programs/Microsoft VS Code/bin/code.cmd"],
+        "cursor" => &["Programs/cursor/resources/app/bin/cursor.cmd"],
+        "qoder" => &["Programs/Qoder/resources/app/bin/qoder.cmd"],
+        "windsurf" => &["Programs/Windsurf/bin/windsurf.cmd"],
+        "zed" => &["Programs/Zed/zed.exe"],
+        // winget 清单的 DefaultInstallLocation 是 `%ProgramFiles%\detachhead\Rebased`
+        "rebased" => &[
+            "detachhead/Rebased/bin/rebased.exe",
+            "detachhead/Rebased/bin/rebased64.exe",
+            "detachhead/Rebased/bin/rebased.cmd",
+            "Programs/Rebased/bin/rebased.exe",
+            "Programs/Rebased/bin/rebased64.exe",
+            "Programs/Rebased/bin/rebased.cmd",
+        ],
+        _ => &[],
+    }
+}
+
 /// 设置里的候选：**全部列出**，装没装都标注出来（换机器后还能沿用同一份习惯）。
 #[tauri::command]
 pub fn editor_options() -> Vec<EditorOption> {
@@ -708,6 +748,142 @@ pub fn editor_options() -> Vec<EditorOption> {
         installed: true,
     });
     out
+}
+
+/// 把自定义命令拆成参数。只处理本项目会生成的写法（路径用双引号包起来），
+/// 不做完整的 shell 解析 —— 够用来找「第一个 token 是哪个程序」。
+fn shell_tokens(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut quoted = false;
+    let mut has = false;
+    for ch in input.chars() {
+        match ch {
+            '"' => {
+                quoted = !quoted;
+                has = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if has {
+                    out.push(std::mem::take(&mut cur));
+                    has = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                has = true;
+            }
+        }
+    }
+    if has {
+        out.push(cur);
+    }
+    out
+}
+
+/// 命令里的程序还在不在：路径查文件系统，裸命令名查 PATH。
+fn program_missing(program: &str) -> bool {
+    if program.is_empty() {
+        return true;
+    }
+    let looks_like_path = program.contains('/')
+        || program.contains('\\')
+        || program.to_ascii_lowercase().ends_with(".app");
+    if looks_like_path {
+        return !Path::new(program).exists();
+    }
+    if find_in_path(program).is_some() {
+        return false;
+    }
+    #[cfg(windows)]
+    for ext in ["exe", "cmd", "bat"] {
+        if find_in_path(&format!("{program}.{ext}")).is_some() {
+            return false;
+        }
+    }
+    true
+}
+
+/// 自定义命令指向的程序如果已经不在了，返回它。
+///
+/// `None` = 还在，或无法判断（`open -a "IntelliJ IDEA"` 用的是应用名而不是路径，
+/// 交给 `open` 自己解析）。
+fn custom_program_missing(template: &str) -> Option<String> {
+    let tokens = shell_tokens(template.trim());
+    let first = tokens.first()?;
+    if first == "open" {
+        let app = tokens
+            .iter()
+            .position(|t| t == "-a")
+            .and_then(|i| tokens.get(i + 1))?;
+        let looks_like_path = app.contains('/')
+            || app.contains('\\')
+            || app.to_ascii_lowercase().ends_with(".app");
+        if !looks_like_path {
+            return None;
+        }
+        return (!Path::new(app).exists()).then(|| app.clone());
+    }
+    program_missing(first).then(|| first.clone())
+}
+
+/// 设置页用：这些自定义命令指向的程序是否已不存在（卸载后要能标出来）。
+#[tauri::command]
+pub fn editor_programs_missing(commands: Vec<String>) -> Vec<bool> {
+    commands
+        .iter()
+        .map(|c| custom_program_missing(c).is_some())
+        .collect()
+}
+
+/// 「选择程序」对话框的起点与可执行文件过滤。
+#[derive(Debug, Clone, Serialize)]
+pub struct ProgramPickerDefault {
+    /// 默认打开的目录；找不到合适的就 `None`（交给对话框自己决定）。
+    pub dir: Option<String>,
+    /// 只允许选的扩展名；空 = 不过滤。
+    pub extensions: Vec<String>,
+}
+
+/// 「选择程序」该从哪儿开始找。
+///
+/// 不给 defaultPath 时三个平台的对话框都会落在「文档」（Windows / Linux 实测
+/// 反馈），用户在那儿根本找不到编辑器，所以按平台给最可能的程序目录。
+/// GTK / Win32 的文件对话框都支持「起点目录」，macOS 直接给 `.app` 所在的
+/// `/Applications`。
+#[tauri::command]
+pub fn program_picker_default() -> ProgramPickerDefault {
+    let (candidates, extensions): (Vec<PathBuf>, Vec<&str>) = if cfg!(windows) {
+        let mut dirs = Vec::new();
+        for key in ["ProgramFiles", "ProgramFiles(x86)"] {
+            if let Some(p) = std::env::var_os(key) {
+                dirs.push(PathBuf::from(p));
+            }
+        }
+        if let Some(p) = std::env::var_os("LOCALAPPDATA") {
+            dirs.push(PathBuf::from(p).join("Programs"));
+        }
+        (dirs, vec!["exe", "cmd", "bat"])
+    } else if cfg!(target_os = "macos") {
+        (vec![PathBuf::from("/Applications")], vec![])
+    } else {
+        (
+            vec![
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/usr/local/bin"),
+                PathBuf::from("/snap/bin"),
+                PathBuf::from("/opt"),
+            ],
+            vec![],
+        )
+    };
+    ProgramPickerDefault {
+        dir: candidates
+            .into_iter()
+            .find(|p| p.is_dir())
+            .map(|p| p.to_string_lossy().into_owned()),
+        extensions: extensions.into_iter().map(str::to_string).collect(),
+    }
 }
 
 /// 自定义命令里的路径要按 shell 规则包起来；没写 `{path}` 就追加在末尾。
@@ -757,6 +933,20 @@ fn spawn_and_watch(mut cmd: Command, what: &str) -> Result<(), String> {
 }
 
 fn run_custom_editor(template: &str, path: &str) -> Result<(), String> {
+    let template = template.trim();
+    if let Some(missing) = custom_program_missing(template) {
+        return Err(format!(
+            "找不到程序「{missing}」（可能已卸载）。请到「设置 → 用编辑器打开」里移除，或重新选择程序"
+        ));
+    }
+    let tokens = shell_tokens(template);
+    // 只有程序本身、没有 shell 语法：直接起进程，不经过 shell。
+    // Windows 上 `cmd /C "带空格的路径" 参数` 的引号规则很容易把路径拆坏。
+    if tokens.len() == 1 {
+        let mut cmd = script_command(Path::new(&tokens[0]), cfg!(target_os = "windows"));
+        cmd.arg(path);
+        return spawn_and_watch(cmd, "自定义编辑器");
+    }
     let script = custom_editor_script(template, path, cfg!(target_os = "windows"));
     if cfg!(target_os = "windows") {
         let mut cmd = Command::new("cmd");
@@ -970,11 +1160,25 @@ mod tests {
     fn editor_catalog_covers_mainstream_editors() {
         for id in [
             "idea", "webstorm", "pycharm", "goland", "phpstorm", "clion", "rubymine", "rider",
-            "datagrip", "vscode", "cursor", "qoder", "zed", "windsurf",
+            "datagrip", "vscode", "cursor", "qoder", "zed", "windsurf", "rebased",
         ] {
             assert!(preset(id).is_some(), "缺少编辑器 {id}");
         }
         assert_eq!(EDITORS[0].id, DEFAULT_EDITOR);
+    }
+
+    /// Windows 已知安装位置必须覆盖 Rebased（winget 默认装 ProgramFiles）。
+    #[test]
+    fn windows_known_paths_cover_rebased() {
+        let paths = windows_known_editor_paths("rebased");
+        assert!(
+            paths.iter().any(|p| p.ends_with("bin/rebased64.exe")),
+            "{paths:?}"
+        );
+        assert!(paths.iter().any(|p| p.starts_with("detachhead/Rebased/")));
+        assert!(windows_known_editor_paths("nope").is_empty());
+        // IDEA 走 Toolbox 递归，本身没有固定位置
+        assert!(!windows_known_editor_paths("vscode").is_empty());
     }
 
     /// 没设置 / 设置成空白 => IDEA；设置过就按设置的来。
@@ -997,7 +1201,8 @@ mod tests {
             .path()
             .join("Visual Studio Code.app/Contents/Resources/app/bin/code");
         let zed = dir.path().join("Zed.app/Contents/MacOS/cli");
-        for file in [&idea, &code, &zed] {
+        let rebased = dir.path().join("Rebased.app/Contents/MacOS/rebased");
+        for file in [&idea, &code, &zed, &rebased] {
             std::fs::create_dir_all(file.parent().unwrap()).unwrap();
             std::fs::write(file, "").unwrap();
         }
@@ -1012,6 +1217,10 @@ mod tests {
         );
         // Zed 的包内 CLI 叫 cli，不是 zed
         assert_eq!(mac_editor_in(&dirs, preset_by_id("zed")), Some(Launcher::Path(zed)));
+        assert_eq!(
+            mac_editor_in(&dirs, preset_by_id("rebased")),
+            Some(Launcher::Path(rebased))
+        );
     }
 
     /// 包在、包内 launcher 不在时退回 `open -a`，而不是判定"没装"。
@@ -1060,7 +1269,45 @@ mod tests {
         );
     }
 
-    /// 未知编辑器 / 自定义命令为空 / 路径不存在，都要当场说清楚。
+    /// 程序被卸载 / 路径写错时要能认出来，别等用户点开只看到退出码。
+    #[test]
+    fn custom_program_missing_detects_removed_programs() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let exe = dir.path().join("editor");
+        std::fs::write(&exe, "").unwrap();
+
+        assert_eq!(custom_program_missing(&format!("\"{}\"", exe.display())), None);
+        let gone = dir.path().join("gone");
+        assert_eq!(
+            custom_program_missing(&format!("\"{}\"", gone.display())),
+            Some(gone.display().to_string())
+        );
+        assert_eq!(
+            custom_program_missing(r#"open -a "/definitely/not/here.app""#),
+            Some("/definitely/not/here.app".into())
+        );
+        // 应用名不是路径，交给 open 自己解析，不能误判成"已卸载"
+        assert_eq!(custom_program_missing(r#"open -a "IntelliJ IDEA""#), None);
+        assert_eq!(custom_program_missing(""), None);
+        assert_eq!(shell_tokens(r#"open -a "A B.app""#), ["open", "-a", "A B.app"]);
+    }
+
+    #[test]
+    fn program_picker_default_points_at_an_existing_dir() {
+        let def = program_picker_default();
+        if let Some(dir) = &def.dir {
+            assert!(Path::new(dir).is_dir(), "起点目录必须真的存在: {dir}");
+        }
+        if cfg!(windows) {
+            assert_eq!(def.extensions, ["exe", "cmd", "bat"]);
+            assert!(def.dir.is_some(), "Windows 必须给一个程序目录，不能再落到「文档」");
+        } else {
+            // macOS 要能选 `.app` 包（本质是目录），按扩展名过滤会让它选不中
+            assert!(def.extensions.is_empty(), "非 Windows 不能按扩展名过滤");
+        }
+    }
+
+    /// 未知编辑器 / 自定义命令为空 / 程序已卸载 / 路径不存在，都要当场说清楚。
     #[test]
     fn editor_errors_are_explicit() {
         let dir = tempfile::TempDir::new().unwrap();
@@ -1069,8 +1316,16 @@ mod tests {
         let err = open_in_editor(path.clone(), Some("nope".into()), None).unwrap_err();
         assert!(err.contains("未知的编辑器"), "{err}");
 
-        let err = open_in_editor(path, Some("custom".into()), None).unwrap_err();
+        let err = open_in_editor(path.clone(), Some("custom".into()), None).unwrap_err();
         assert!(err.contains("自定义编辑器命令"), "{err}");
+
+        let err = open_in_editor(
+            path,
+            Some("custom".into()),
+            Some(r#""/definitely/not/here-gws-editor""#.into()),
+        )
+        .unwrap_err();
+        assert!(err.contains("可能已卸载"), "{err}");
 
         let err = open_in_editor(
             "/definitely/not/here-gws-test".to_string(),
