@@ -54,6 +54,8 @@ const descriptionEdited = ref(false);
 const loadingDefaults = ref(false);
 
 const names = computed(() => props.modules.filter((m) => m.present).map((m) => m.module));
+/** 不干净/没推送的模块：有它们就**一个 MR 都不创建**（避免少提一个再补一次）。 */
+const blocked = computed(() => plan.value?.blocked ?? []);
 
 // 默认全选。父组件换了需求就重来一遍。
 watch(
@@ -220,6 +222,11 @@ async function create() {
     });
     plan.value = p;
     applyPlanMeta(p);
+    if (p.blocked.length) {
+      // 后端一个都没建——必须说出来，不能报「已创建 0 个」让人以为提了
+      msg.error(`有 ${p.blocked.length} 个模块不干净/没推送，本次没有创建任何 MR`);
+      return;
+    }
     const made = p.rows.filter((r) => r.created).length;
     const reused = p.rows.filter((r) => r.created === null && r.existing).length;
     msg.success(`已创建 ${made} 个，复用 ${reused} 个`);
@@ -334,7 +341,15 @@ function copyManifest() {
         <NButton size="small" :disabled="creating" @click="preview">
           {{ plan ? "重新预览" : "预览" }}
         </NButton>
-        <NButton size="small" type="primary" :loading="creating" @click="create">创建 MR</NButton>
+        <NButton
+          size="small"
+          type="primary"
+          :loading="creating"
+          :disabled="blocked.length > 0"
+          @click="create"
+        >
+          创建 MR
+        </NButton>
         <NButton size="small" @click="closeAll">关闭 MR</NButton>
       </div>
 
@@ -395,6 +410,20 @@ function copyManifest() {
         还没有预览。点右侧「预览」去 GitLab 查一遍（要联网，可能要几秒）——
         打开这一页时不会自动去查，点「预览」才会。
       </p>
+
+      <!-- **部分创建是最糟的结果**：人以为提齐了，其实漏了文档库，只能补提一次。
+           所以只要有一个模块不干净/没推送，就整体拦住。 -->
+      <NAlert v-if="plan?.blocked.length" type="error" :bordered="false" class="mb">
+        <b>有 {{ plan.blocked.length }} 个模块不能提 MR，本次一个都不会创建</b>
+        <div class="muted small">
+          先把这些模块的改动提交并推送，再回来重新预览：
+        </div>
+        <div v-for="[m, why] in plan.blocked" :key="m" class="small err-text">✗ {{ m }}：{{ why }}</div>
+      </NAlert>
+      <NAlert v-if="plan?.not_selected.length" type="warning" :bordered="false" class="mb">
+        本次没选这些模块，它们**不会**出现在 MR 里：{{ plan.not_selected.join("、") }}。
+        如果它们也有改动，请在上面的「选择模块」里勾上。
+      </NAlert>
 
       <table v-if="plan" class="tbl">
         <thead>

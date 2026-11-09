@@ -299,6 +299,16 @@ export interface PullOutcome {
   conflicts: string[];
 }
 
+export interface CommitOutcome {
+  /** 提交成功的模块与提交进去的改动条目数。 */
+  committed: [string, number][];
+  /** 本来就没有改动（无需提交）的模块。 */
+  clean: string[];
+  /** 有未解决冲突、被跳过的模块。 */
+  conflicts: string[];
+  failed: [string, string][];
+}
+
 export interface MergeOutcome {
   env: string;
   stale: string[];
@@ -336,6 +346,22 @@ export interface DoneOutcome {
   merged: string[];
   /** 尚未并入主干的模块及领先提交数（0 = 读不到差异）。 */
   unmerged: [string, number][];
+  /** 还有未提交改动的模块及条目数（改动没进提交，就谈不上「已并入」）。 */
+  dirty: [string, number][];
+  /** 元数据里登记了、但工作区里没有检出目录的模块。 */
+  missing: string[];
+}
+
+/** 环境里的一个提交（合并检查的历史列表）。 */
+export interface EnvCommit {
+  /** 短 sha。 */
+  sha: string;
+  /** 作者名。 */
+  author: string;
+  /** 提交时间（`YYYY-MM-DD HH:MM`）。 */
+  date: string;
+  /** 提交说明。 */
+  subject: string;
 }
 
 /** 合并后检查：某模块在环境里的状态。 */
@@ -347,12 +373,22 @@ export interface EnvModuleCheck {
   /** 远程还没有的本地提交数（>0 = 没推上去）。 */
   unpushed: number;
   behind: number;
-  /** 合进环境的提交：`[短 sha, 说明]`。 */
-  commits: [string, string][];
+  /** 合进环境的提交。 */
+  commits: EnvCommit[];
   /** 相对主干改了几个文件。 */
   files: number;
   /** 该模块在此环境实际检出的分支（前端拿它拼 `origin/<分支>` 做比对基准）。 */
   env_branch: string;
+  /** 需求分支的提交**是否真的都进了环境**（按补丁内容比对，squash 也认）。 */
+  merged: boolean;
+  /** 还没进环境的提交数（`merged === false` 时有意义）。 */
+  missing: number;
+  /** 环境目录里未提交的改动条目数（>0 时环境里是「半合并 + 未提交」）。 */
+  dirty: number;
+  /** 环境目录当前检出的分支。 */
+  head_branch: string;
+  /** 当前检出分支是否就是该环境应有的分支（不是 → 检查结果不可信）。 */
+  branch_ok: boolean;
   error: string | null;
 }
 
@@ -409,6 +445,10 @@ export interface MrPlan {
   reviewers: Reviewers;
   rows: MrRow[];
   skipped: [string, string][];
+  /** `(模块, 原因)`：不干净/没推送，**本次一个 MR 都不创建**。 */
+  blocked: [string, string][];
+  /** 工作区里有、但这次没选进来的模块。 */
+  not_selected: string[];
   registered: Record<string, number>;
   is_dry_run: boolean;
 }

@@ -5,7 +5,7 @@
 //! `#[tauri::command(async)]` + `bg`，并上报逐模块进度。
 
 use tauri::State;
-use gws_core::workspace::sync::{self, DoneOutcome, MergeOutcome, PullOutcome, PushOutcome, SyncMainOutcome, SyncOutcome};
+use gws_core::workspace::sync::{self, CommitOutcome, DoneOutcome, MergeOutcome, PullOutcome, PushOutcome, SyncMainOutcome, SyncOutcome};
 use gws_core::workspace::Workspace;
 
 use super::{bg, App, CmdResult, FilterInput};
@@ -39,6 +39,24 @@ pub async fn ws_pull(
     bg(move || {
         let ws = Workspace::open(&hub, &branch)?;
         Ok(sync::pull_with(&hub, &ws, &filter.into(), rebase, Some(&cb))?)
+    })
+    .await
+}
+
+/// 把各模块的未提交改动 `git add -A` 后提交（推送之前的那一步）。
+#[tauri::command(async)]
+pub async fn ws_commit(
+    branch: String,
+    message: String,
+    filter: FilterInput,
+    app: State<'_, App>,
+    app_handle: tauri::AppHandle,
+) -> CmdResult<CommitOutcome> {
+    let hub = app.hub()?;
+    let cb = super::progress_cb(&app_handle);
+    bg(move || {
+        let ws = Workspace::open(&hub, &branch)?;
+        Ok(sync::commit_with(&hub, &ws, &filter.into(), &message, Some(&cb))?)
     })
     .await
 }
@@ -90,6 +108,19 @@ pub async fn ws_sync_main(
 
 // ══ 合并后检查（需求：合进 dev 之后要能看「合了什么、推没推」）══════════
 
+/// 环境里的一个提交（历史列表展示用）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EnvCommit {
+    /// 短 sha。
+    pub sha: String,
+    /// 作者名。
+    pub author: String,
+    /// 提交时间（`YYYY-MM-DD HH:MM`）。
+    pub date: String,
+    /// 提交说明。
+    pub subject: String,
+}
+
 /// 某模块在这次合并里的状态。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct EnvModuleCheck {
@@ -102,12 +133,23 @@ pub struct EnvModuleCheck {
     pub unpushed: u64,
     /// 本地落后远程多少个提交。
     pub behind: u64,
-    /// 合到环境里的提交（相对主干多出来的那些）：`(短 sha, 说明)`。
-    pub commits: Vec<(String, String)>,
+    /// 合到环境里的提交（相对主干多出来的那些）。
+    pub commits: Vec<EnvCommit>,
     /// 相对主干改了哪些文件。
     pub files: u64,
     /// 该模块在此环境实际检出的分支 —— 前端拿它拼 `origin/<分支>` 做比对基准。
     pub env_branch: String,
+    /// 需求分支的提交**是否都已经进了这个环境**（`git cherry` 按补丁比对，
+    /// squash 合并也算已合入）。
+    pub merged: bool,
+    /// 需求分支里还有多少提交没进环境（>0 = 合漏了）。
+    pub missing: u64,
+    /// 环境 worktree 里还有多少未提交改动。
+    pub dirty: u64,
+    /// 环境 worktree 当前检出的分支（空串 = detached）。
+    pub head_branch: String,
+    /// 检出分支与配置的环境分支是否一致（不一致时上面所有比较都不可信）。
+    pub branch_ok: bool,
     pub error: Option<String>,
 }
 
@@ -128,7 +170,10 @@ pub async fn env_merge_check(
     let hub = app.hub()?;
     bg(move || {
         let ws = Workspace::open(&hub, &branch)?;
-        let names: Vec<String> = ws.meta().modules.clone();
+        // **含文档库**：它不在 `meta.modules` 里，但同样会进环境。
+        // 只遍历 meta.modules 的话，文档被漏合时这里根本不会报（实测反馈：
+        // 「明明有代码没合进去，却说都合进去了」）。
+        let names = sync::op_candidates(&ws, &hub.dochub_name());
         let mut out = Vec::new();
 
         for m in names {
@@ -136,7 +181,7 @@ pub async fn env_merge_check(
             if !dir.join(".git").exists() {
                 continue; // 这个模块不参与该环境，不是错误
             }
-            out.push(check_one(&hub, &m, &env, &dir));
+            out.push(check_one(&hub, &m, &env, &dir, &branch));
         }
         Ok(out)
     })
@@ -148,6 +193,7 @@ fn check_one(
     module: &str,
     env: &str,
     dir: &std::path::Path,
+    req_branch: &str,
 ) -> EnvModuleCheck {
     let git = gws_core::git::Git::new(dir);
     let mut c = EnvModuleCheck {
@@ -159,8 +205,17 @@ fn check_one(
         commits: Vec::new(),
         files: 0,
         env_branch: String::new(),
+        merged: false,
+        missing: 0,
+        dirty: 0,
+        head_branch: String::new(),
+        branch_ok: true,
         error: None,
     };
+
+    // 刷新 origin 引用：不算这一步的话，刚推上去的需求分支在这里还是「不存在」。
+    // 失败不致命（断网时按本地已有引用判断）。
+    let _ = git.fetch();
 
     // ① 冲突：**看未合并路径**，不看退出码
     match git.unmerged_paths() {
@@ -180,14 +235,30 @@ fn check_one(
         Err(_) => "origin/main".to_string(),
     };
 
-    // ② 合了什么：环境里相对主干多出来的提交
-    if let Ok(text) = git.out(&["log", "--format=%h|%s", &format!("{main_ref}..HEAD")]) {
+    // ② 合了什么：环境里相对主干多出来的提交（带作者与时间，方便判断是谁什么时候合的）
+    //    `%ad` 配 `--date=format:` 给的是**本地时区**的墙上时间，不是 UTC。
+    if let Ok(text) = git.out(&[
+        "log",
+        "--format=%h|%an|%ad|%s",
+        "--date=format:%Y-%m-%d %H:%M",
+        &format!("{main_ref}..HEAD"),
+    ]) {
         c.commits = text
             .lines()
             .filter(|l| !l.trim().is_empty())
-            .map(|l| {
-                let (sha, subject) = l.split_once('|').unwrap_or((l, ""));
-                (sha.to_string(), subject.to_string())
+            .filter_map(|l| {
+                // 说明里可能有 `|`，所以只切前 3 个
+                let mut it = l.splitn(4, '|');
+                let sha = it.next()?.trim();
+                if sha.is_empty() {
+                    return None;
+                }
+                Some(EnvCommit {
+                    sha: sha.to_string(),
+                    author: it.next().unwrap_or("").trim().to_string(),
+                    date: it.next().unwrap_or("").trim().to_string(),
+                    subject: it.next().unwrap_or("").trim().to_string(),
+                })
             })
             .collect();
     }
@@ -213,6 +284,33 @@ fn check_one(
     } else {
         c.error = Some(format!("远程还没有 {env_branch} 分支"));
     }
+
+    // ④ **需求分支的提交到底进没进这个环境**。
+    //    只看「有没有冲突 / 推没推」是不够的：合并被跳过时两个都是 0，
+    //    于是界面显示「合并干净、也已全部推送」——而代码其实没合进去（实测反馈）。
+    if git.remote_branch_exists(req_branch) {
+        match git.count_cherry("HEAD", &format!("origin/{req_branch}")) {
+            Ok(0) => c.merged = true,
+            Ok(n) => {
+                c.merged = false;
+                c.missing = n;
+            }
+            Err(e) => {
+                c.merged = false;
+                c.error = Some(format!("比对需求分支失败：{e}"));
+            }
+        }
+    } else {
+        c.merged = false;
+        if c.error.is_none() {
+            c.error = Some(format!("需求分支还没推到远程（origin/{req_branch}）"));
+        }
+    }
+
+    // ⑤ 环境里的现场状态：半合并留下的未提交改动、检出分支跑偏
+    c.dirty = git.dirty_count().unwrap_or(0);
+    c.head_branch = git.current_branch().unwrap_or_default();
+    c.branch_ok = c.head_branch == env_branch;
 
     c
 }

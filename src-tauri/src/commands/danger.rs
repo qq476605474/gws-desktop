@@ -19,30 +19,34 @@ fn client(hub: &gws_core::hub::Hub) -> CmdResult<Client> {
 
 // ── 撤销改动（需求 #3）──────────────────────────────────────────────
 
-#[tauri::command]
-pub fn ws_revert_plan(
+#[tauri::command(async)]
+pub async fn ws_revert_plan(
     branch: String,
     filter: FilterInput,
     app: State<'_, App>,
 ) -> CmdResult<RevertPlan> {
-    app.with_hub(|hub| {
-        let ws = Workspace::open(hub, &branch)?;
+    let hub = app.hub()?;
+    bg(move || {
+        let ws = Workspace::open(&hub, &branch)?;
         let f: ModuleFilter = filter.into();
-        revert::revert_plan(hub, &ws, &f)
+        Ok(revert::revert_plan(&hub, &ws, &f)?)
     })
+    .await
 }
 
-#[tauri::command]
-pub fn ws_revert_apply(
+#[tauri::command(async)]
+pub async fn ws_revert_apply(
     branch: String,
     filter: FilterInput,
     app: State<'_, App>,
 ) -> CmdResult<RevertOutcome> {
-    app.with_hub(|hub| {
-        let ws = Workspace::open(hub, &branch)?;
+    let hub = app.hub()?;
+    bg(move || {
+        let ws = Workspace::open(&hub, &branch)?;
         let f: ModuleFilter = filter.into();
-        revert::revert_apply(hub, &ws, &f)
+        Ok(revert::revert_apply(&hub, &ws, &f)?)
     })
+    .await
 }
 
 // ── 强制回退到远程（需求 #10）──────────────────────────────────────

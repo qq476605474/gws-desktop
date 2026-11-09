@@ -341,6 +341,12 @@ pub struct MrPlan {
     pub rows: Vec<MrRow>,
     /// `(模块, 跳过原因)`。原因要能区分「已合并」「未推送」「无改动」。
     pub skipped: Vec<(String, String)>,
+    /// `(模块, 原因)`：这些模块不干净/没推送，**本次一个 MR 都不创建**。
+    ///
+    /// 部分创建是最糟的结果——人以为提齐了，其实少了文档库，只能再补一次。
+    pub blocked: Vec<(String, String)>,
+    /// 工作区里有、但这次没选进来的模块（默认全选，取消勾选时要提醒）。
+    pub not_selected: Vec<String>,
     /// 本工作区登记的、不在本次范围内的模块（元数据里的 `mr` 字段）。
     pub registered: BTreeMap<String, u64>,
     pub is_dry_run: bool,
@@ -439,6 +445,11 @@ pub fn run(
         reviewers,
         rows: Vec::new(),
         skipped: Vec::new(),
+        blocked: Vec::new(),
+        not_selected: sync::op_candidates(ws, &hub.dochub_name())
+            .into_iter()
+            .filter(|m| !modules.iter().any(|x| x == m))
+            .collect(),
         registered: BTreeMap::new(),
         is_dry_run: !create,
     };
@@ -453,21 +464,34 @@ pub fn run(
         let git = crate::git::Git::new(&wt);
         let repo = Repo::open(hub, module)?;
 
+        // ⓪ 工作区必须干净：未提交的改动**不会被 MR 带上**，
+        //    静默跳过就会生成一个「模块不全」的 MR（实测反馈：文档库没提交，
+        //    MR 里理所当然也没有文档，只好补提第二次）。
+        let dirty = git.dirty_count()?;
+        if dirty > 0 {
+            rep.fail(module.clone(), format!("有 {dirty} 个未提交改动"));
+            plan.blocked.push((
+                module.clone(),
+                format!("有 {dirty} 个未提交改动，先点「提交」再提 MR"),
+            ));
+            continue;
+        }
+
         // ① 必须已推送：MR 基于远程分支，本地提交没推上去，MR 内容就不全
         if !git.remote_branch_exists(&branch) {
             rep.fail(module.clone(), "分支没推送到远程");
-            plan.skipped.push((
+            plan.blocked.push((
                 module.clone(),
-                format!("origin/{branch} 不存在，先 gws push"),
+                format!("origin/{branch} 不存在，先点「推送」"),
             ));
             continue;
         }
         let ahead = git.count_range(&format!("origin/{branch}..HEAD"))?;
         if ahead != 0 {
             rep.fail(module.clone(), format!("{ahead} 个提交未推送"));
-            plan.skipped.push((
+            plan.blocked.push((
                 module.clone(),
-                format!("有 {ahead} 个提交未推送，先 gws push"),
+                format!("有 {ahead} 个提交未推送，先点「推送」"),
             ));
             continue;
         }
@@ -504,7 +528,7 @@ pub fn run(
         // ③ 幂等：已有打开的 MR 就复用
         let existing = client.open_mr(&project, &branch)?;
 
-        let mut row = MrRow {
+        plan.rows.push(MrRow {
             module: module.clone(),
             project: project.clone(),
             group,
@@ -517,9 +541,23 @@ pub fn run(
             existing,
             created: None,
             error: None,
-        };
+        });
+    }
+    rep.finish();
 
-        if create && row.existing.is_none() {
+    // 有任何 blocked 就**一个 MR 都不建**：部分创建会让人以为提齐了，
+    // 补提时又得再来一次（实测反馈的核心痛点）。
+    if create && plan.blocked.is_empty() {
+        let mut rep = crate::progress::Reporter::start(cb, plan.rows.len(), "创建 MR");
+        for row in &mut plan.rows {
+            if row.existing.is_some() {
+                rep.ok(format!(
+                    "{}（已有 MR #{}, 复用）",
+                    row.module,
+                    row.existing.as_ref().map(|m| m.iid).unwrap_or_default()
+                ));
+                continue;
+            }
             let req = CreateMrRequest {
                 source_branch: branch.clone(),
                 target_branch: row.target_branch.clone(),
@@ -527,30 +565,28 @@ pub fn run(
                 title: title.clone(),
                 description: description.clone(),
                 // 没配评审人时为空 → 请求体里不带 reviewer_ids（不瞎填一个人）
-                reviewer_ids: if reviewer_id == 0 { Vec::new() } else { vec![reviewer_id] },
+                reviewer_ids: if row.reviewer_id == 0 {
+                    Vec::new()
+                } else {
+                    vec![row.reviewer_id]
+                },
                 squash: false,
                 // 不自动删源分支：主干合并后可能还要 hotfix，且删分支是独立决策
                 remove_source_branch: false,
             };
-            match client.create_mr(&project, &req) {
+            match client.create_mr(&row.project, &req) {
                 Ok(mr) => {
-                    rep.ok(format!("{module} → {}", mr.web_url));
+                    rep.ok(format!("{} → {}", row.module, mr.web_url));
                     row.created = Some(mr);
                 }
                 Err(e) => {
-                    rep.fail(module.clone(), e.to_string());
+                    rep.fail(row.module.clone(), e.to_string());
                     row.error = Some(e.to_string());
                 }
             }
-        } else if let Some(mr) = &row.existing {
-            rep.ok(format!("{module}（已有 MR #{}, 复用）", mr.iid));
-        } else {
-            rep.ok(format!("{module} 待创建"));
         }
-
-        plan.rows.push(row);
+        rep.finish();
     }
-    rep.finish();
 
     // 把成功的 MR 登记进工作区元数据（需求 #1：以后能查到、能关掉）
     if create {

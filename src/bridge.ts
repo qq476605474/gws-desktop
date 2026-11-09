@@ -10,6 +10,7 @@ import { notifyError } from "./lib/notify";
 import type {
   AttachOutcome,
   CloseOutcome,
+  CommitOutcome,
   QuickLink,
   RepoImportResult,
   ShareImportResult,
@@ -228,6 +229,9 @@ export const wsPatchMeta = (branch: string, patch: MetaPatch) =>
 
 export const wsPush = (branch: string, filter: FilterInput = {}) =>
   tracked(invoke<PushOutcome>("ws_push", { branch, filter }));
+/** 「提交」：把工作区里的改动 `git add` + commit（不推送）。 */
+export const wsCommit = (branch: string, message: string, filter: FilterInput = {}) =>
+  tracked(invoke<CommitOutcome>("ws_commit", { branch, message, filter }));
 export const wsPull = (branch: string, rebase: boolean, filter: FilterInput = {}) =>
   tracked(invoke<PullOutcome>("ws_pull", { branch, rebase, filter }));
 export const wsMerge = (

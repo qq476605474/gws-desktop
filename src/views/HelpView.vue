@@ -14,7 +14,7 @@ const sections: { id: string; title: string }[] = [
   { id: "help-start", title: "快速上手：hub 与目录结构" },
   { id: "help-new", title: "新建 / 导入需求" },
   { id: "help-list", title: "需求列表与需求详情" },
-  { id: "help-daily", title: "日常：检查远程、拉取、推送" },
+  { id: "help-daily", title: "日常：检查远程、拉取、提交、推送" },
   { id: "help-base", title: "基线：分阶段需求与「同步基线」" },
   { id: "help-env", title: "合并到环境与合并检查" },
   { id: "help-compare", title: "对比代码与浏览文件" },
@@ -109,7 +109,7 @@ function go(id: string) {
             「复制」给用别的 AI 平台的人——把路径粘过去当工作目录即可。右边是当前版本号。
             换 hub 不会动磁盘上的任何文件。
           </li>
-          <li>长操作（同步、拉取、合并、推送、同步基线）会弹进度框，逐个模块显示结果；看起来没动静时先看那里。</li>
+          <li>长操作（同步、拉取、提交、合并、推送、同步基线）会弹进度框，逐个模块显示结果；看起来没动静时先看那里。</li>
         </ul>
       </NCard>
     </section>
@@ -169,7 +169,7 @@ function go(id: string) {
             基线链、模块数和「模块目录缺失」提示。
           </li>
           <li>
-            详情顶部：分类标签、基线、当前版本信息，以及一排操作（检查远程、拉取、推送、
+            详情顶部：分类标签、基线、当前版本信息，以及一排操作（检查远程、拉取、提交、推送、
             合并到环境、发布、提 MR、同步基线……）；右侧是「导出需求配置」「打开目录」
             「用编辑器打开」「终端」「复制目录」「刷新」。
           </li>
@@ -193,7 +193,7 @@ function go(id: string) {
 
     <!-- ── 3. 日常 ── -->
     <section id="help-daily" class="sec">
-      <NCard size="small" class="card" title="日常：检查远程、拉取、推送">
+      <NCard size="small" class="card" title="日常：检查远程、拉取、提交、推送">
         <ul>
           <li>
             <strong>检查远程</strong>：对每个模块 fetch 一次（只读）。有模块落后时，
@@ -203,6 +203,15 @@ function go(id: string) {
             <strong>拉取</strong>：把远程<strong>同一分支</strong>上的提交合进来。
             默认 merge；勾「用 rebase」会改写本地提交顺序，只在确定这些提交还没合进过远程
             基于时用。只影响勾选的模块。
+          </li>
+          <li>
+            <strong>提交</strong>：把勾选模块里<strong>所有待提交的改动</strong> add 并提交，
+            适合让 AI 写完代码、你 review 完先落一个提交。提交说明默认按
+            <strong>Conventional Commits</strong> 填（类型 / 影响范围 / 描述 /
+            可选正文，正文一行一条、自动转成列表），影响范围直接手填、可留空，
+            适用批量提交多个仓库；下面实时预览生成结果。也可以切「自由填写」，
+            支持多行。描述留空就用默认说明，规范不是强制的。默认<strong>不推送</strong>；
+            要一步到位就勾「提交后直接推送到远程」——有冲突或提交失败的模块不会被推。
           </li>
           <li>
             <strong>推送</strong>：把本需求分支推到远程。落后远程时会中止并提示先拉；
@@ -264,7 +273,13 @@ function go(id: string) {
             批量解冲突时直接打开环境根目录，不用一个个模块点。
           </li>
           <li>
-            <strong>合并到环境检查</strong>：逐个模块显示成功 / 冲突 / 是否已推到远程。
+            <strong>合并到环境检查</strong>：逐个模块给出结论 —— 有没有冲突、需求分支的提交
+            是否<strong>真的都进了环境</strong>（按补丁比对，squash 也算）、环境里有没有未提交
+            改动、检出分支对不对、推没推。冲突 / 漏合 / 未提交时顶部会直接报出来。
+          </li>
+          <li>
+            每个模块下面列出<strong>已合进环境的提交</strong>：短 sha、说明、作者和提交时间，
+            一眼能看出是谁什么时候合的；最多列 30 条，其余会提示数量。
           </li>
           <li>
             <strong>并入主干检查</strong>：确认各模块是否都已进主干 —— 决定能不能清理远程分支、

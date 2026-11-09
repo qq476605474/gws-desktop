@@ -12,7 +12,7 @@ use tempfile::TempDir;
 use gws_core::hub::{Hub, InitOptions};
 use gws_core::repo;
 use gws_core::workspace::lifecycle::{self, NewOptions};
-use gws_core::workspace::revert;
+use gws_core::workspace::{revert, sync};
 use gws_core::workspace::{ModuleFilter, Workspace};
 
 fn git(cwd: &Path, args: &[&str]) -> String {
@@ -126,6 +126,45 @@ fn revert_apply_restores_files_and_removes_untracked() {
     );
     assert!(!wt.join("brand-new.txt").exists(), "未跟踪文件应被清掉");
     assert_eq!(git(&wt, &["status", "--porcelain"]), "", "撤销后应完全干净");
+}
+
+#[test]
+fn revert_apply_undoes_staged_changes() {
+    // 实测 BUG：改动已经 `git add` 过时，撤销永远撤不掉——
+    // 旧实现只 `checkout -- .`（工作树从 index 还原），index 里的改动原样留着。
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    let wt = f.wt("feature-x");
+
+    std::fs::write(wt.join("README.md"), "改了并且 add 了").unwrap();
+    std::fs::write(wt.join("staged-new.txt"), "新文件也 add 了").unwrap();
+    git(&wt, &["add", "-A"]);
+    assert_ne!(git(&wt, &["status", "--porcelain"]), "");
+
+    let out = revert::revert_apply(&f.hub, &ws, &ModuleFilter::all()).unwrap();
+
+    assert_eq!(out.reverted.len(), 1, "{out:?}");
+    assert!(out.failed.is_empty(), "{out:?}");
+    assert_eq!(git(&wt, &["status", "--porcelain"]), "", "已暂存的改动也应被撤销");
+    assert_eq!(std::fs::read_to_string(wt.join("README.md")).unwrap(), "# seed\n");
+}
+
+#[test]
+fn revert_keeps_idea_without_reporting_failure() {
+    // `.idea` 被 `git clean -e` 保留；它不该让「撤销」报「还有改动没撤掉」
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    let wt = f.wt("feature-x");
+
+    std::fs::create_dir_all(wt.join(".idea")).unwrap();
+    std::fs::write(wt.join(".idea/workspace.xml"), "x").unwrap();
+    std::fs::write(wt.join("README.md"), "改了").unwrap();
+
+    let out = revert::revert_apply(&f.hub, &ws, &ModuleFilter::all()).unwrap();
+
+    assert_eq!(out.reverted.len(), 1, "{out:?}");
+    assert!(out.failed.is_empty(), "{out:?}");
+    assert!(wt.join(".idea/workspace.xml").is_file(), ".idea 应保留");
 }
 
 #[test]
@@ -293,4 +332,70 @@ impl Fixture {
         git(&other, &["-c", "user.email=c@c", "-c", "user.name=c", "commit", "-q", "-m", "c"]);
         git(&other, &["push", "-q", "origin", "main"]);
     }
+}
+
+// ══ 提交（先提交、review 后再推送）══════════════════════════════════════
+
+fn set_identity(wt: &Path) {
+    git(wt, &["config", "user.email", "t@t"]);
+    git(wt, &["config", "user.name", "t"]);
+}
+
+#[test]
+fn commit_adds_and_commits_all_changes() {
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    let wt = f.wt("feature-x");
+    set_identity(&wt);
+
+    std::fs::write(wt.join("README.md"), "改了的").unwrap();
+    std::fs::write(wt.join("new.txt"), "新文件").unwrap();
+
+    let out = sync::commit(&f.hub, &ws, &ModuleFilter::all(), "test: 提交").unwrap();
+
+    assert_eq!(out.committed.len(), 1, "{out:?}");
+    assert!(out.failed.is_empty(), "{out:?}");
+    assert_eq!(git(&wt, &["status", "--porcelain"]), "", "提交后应变干净");
+    assert_eq!(git(&wt, &["log", "-1", "--format=%s"]), "test: 提交");
+}
+
+#[test]
+fn commit_reports_clean_modules_without_failing() {
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+
+    let out = sync::commit(&f.hub, &ws, &ModuleFilter::all(), "").unwrap();
+
+    assert!(out.committed.is_empty(), "{out:?}");
+    assert_eq!(out.clean, vec!["repo-a".to_string()]);
+    assert!(out.failed.is_empty() && out.conflicts.is_empty(), "{out:?}");
+}
+
+// ══ 并入主干检查不能把「未提交」「没检出」算成已并入 ═════════════════════
+
+#[test]
+fn done_reports_dirty_modules_instead_of_merged() {
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    let wt = f.wt("feature-x");
+    std::fs::write(wt.join("README.md"), "还没提交").unwrap();
+
+    let out = sync::done(&f.hub, &ws, &ModuleFilter::all(), None).unwrap();
+
+    assert!(out.merged.is_empty(), "{out:?}");
+    assert_eq!(out.dirty, vec![("repo-a".to_string(), 1)], "{out:?}");
+    assert!(!out.is_done());
+}
+
+#[test]
+fn done_reports_missing_modules_instead_of_merged() {
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    std::fs::remove_dir_all(f.wt("feature-x")).unwrap();
+
+    let out = sync::done(&f.hub, &ws, &ModuleFilter::all(), None).unwrap();
+
+    assert!(out.merged.is_empty(), "{out:?}");
+    assert_eq!(out.missing, vec!["repo-a".to_string()], "{out:?}");
+    assert!(!out.is_done());
 }

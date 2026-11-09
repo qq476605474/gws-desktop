@@ -1044,29 +1044,52 @@ pub fn list_dir(path: String) -> Result<Vec<String>, String> {
 }
 
 /// 列目录下**所有**条目（文件与目录都返回），供文件浏览（需求 #18）。
+///
+/// **不展示用户不该看到的东西**：`.git`、操作系统垃圾、点开头的隐藏目录
+/// （`.idea` / `.vscode` / `.claude` …），以及被 git 忽略的条目。
+/// 实测反馈：用 IDE 打开文档库时，`.idea` 这种目录也混在树里；
+/// 它们永远不会进版本库，列出来只会让人找错文件。
 #[tauri::command(async)]
 pub fn list_entries(path: String) -> Result<Vec<EntryInfo>, String> {
     let entries = std::fs::read_dir(&path).map_err(|e| format!("列出目录失败 {path}: {e}"))?;
+    // 一次 git 调用拿到本目录下被忽略的条目；不在仓库里时为空表（不隐藏任何东西）
+    let ignored: std::collections::HashSet<String> =
+        gws_core::git::Git::new(&path).ignored_entry_names().into_iter().collect();
     let mut out = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| format!("列出目录失败 {path}: {e}"))?;
         let Some(name) = entry.file_name().to_str().map(str::to_string) else {
             continue;
         };
-        // .git 内部目录对用户没有意义，翻起来还极慢
-        if name == ".git" {
+        let ft = entry.file_type().map_err(|e| format!("列出目录失败 {path}: {e}"))?;
+        let is_dir = ft.is_dir();
+        if hide_entry(&name, is_dir, &ignored) {
             continue;
         }
-        let ft = entry.file_type().map_err(|e| format!("列出目录失败 {path}: {e}"))?;
         out.push(EntryInfo {
             name: name.clone(),
             path: entry.path().to_string_lossy().to_string(),
-            is_dir: ft.is_dir(),
+            is_dir,
         });
     }
     // 目录在前、同类按名字排序
     out.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
     Ok(out)
+}
+
+/// 文件浏览里是否隐藏某个条目。
+fn hide_entry(name: &str, is_dir: bool, ignored: &std::collections::HashSet<String>) -> bool {
+    if name == ".git" {
+        return true; // 内部目录，翻起来还极慢
+    }
+    if gws_core::git::is_os_junk(name) {
+        return true;
+    }
+    // 点开头的目录一律不展示：IDE 的工程目录、AI 助手的私有目录都不是「项目文件」
+    if is_dir && name.starts_with('.') {
+        return true;
+    }
+    ignored.contains(name)
 }
 
 #[derive(Debug, Clone, Serialize)]

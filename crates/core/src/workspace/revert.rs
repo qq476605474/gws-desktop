@@ -91,6 +91,10 @@ pub fn revert_plan(hub: &Hub, ws: &Workspace, filter: &ModuleFilter) -> Result<R
             let (code, path) = line.split_at(2);
             let path = path.trim();
             if code.starts_with("??") {
+                // `git clean` 会保留这些目录，预览里也不该把它们列成「将被删除」
+                if crate::git::is_kept(path, CLEAN_KEEP) {
+                    continue;
+                }
                 untracked.push(path.to_string());
             } else {
                 modified.push(path.to_string());
@@ -112,6 +116,12 @@ pub fn revert_apply(hub: &Hub, ws: &Workspace, filter: &ModuleFilter) -> Result<
 
     for m in &plan.modules {
         let git = Git::new(ws.module_path(&m.module));
+        // **先清索引，再还原工作树。** `git checkout -- .` 从索引还原，
+        // 已 `git add` 的改动会原样留在索引里 —— 撤销完仍然脏。
+        if let Err(e) = git.unstage_all() {
+            out.failed.push((m.module.clone(), e.to_string()));
+            continue;
+        }
         // 先还原已跟踪文件，再清未跟踪文件。顺序反过来的话，
         // clean 可能删掉 checkout 正要还原的目标。
         if let Err(e) = git.status(&["checkout", "--", "."]) {
@@ -123,13 +133,15 @@ pub fn revert_apply(hub: &Hub, ws: &Workspace, filter: &ModuleFilter) -> Result<
             out.failed.push((m.module.clone(), e.to_string()));
             continue;
         }
-        // 撤销后校验真的干净了——不然「报成功但没撤销」是老问题
-        let left = git.dirty_count()?;
-        if left > 0 {
-            out.failed.push((m.module.clone(), format!("撤销后仍有 {left} 处改动")));
-            continue;
+        // 撤销后校验真的干净了——不然「报成功但没撤销」是老问题。
+        // 口径必须与 clean 的保留清单一致：node_modules / .idea 本来就不清。
+        match git.dirty_count_excluding(&keep) {
+            Ok(0) => out.reverted.push((m.module.clone(), m.file_count())),
+            Ok(left) => out
+                .failed
+                .push((m.module.clone(), format!("撤销后仍有 {left} 处改动"))),
+            Err(e) => out.failed.push((m.module.clone(), e.to_string())),
         }
-        out.reverted.push((m.module.clone(), m.file_count()));
     }
 
     Ok(out)

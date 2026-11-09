@@ -512,17 +512,37 @@ pub fn done_outcome(out: &DoneOutcome) {
         }
         println!();
     }
-    eprintln!("⚠ 尚未并入主干（{} 个）：", out.unmerged.len());
-    for (m, n) in &out.unmerged {
-        // n=0 是「连领先多少都读不到」的情况，别写成「0 个提交」骗人
-        if *n == 0 {
-            eprintln!("     {m}: 读不到与主干的差异");
-        } else {
-            eprintln!("     {m}: 领先主干 {n} 个提交");
+    // 改动没进提交，就谈不上「已并入」—— 也必须报出来，别只报提交
+    if !out.dirty.is_empty() {
+        eprintln!("⚠ 还有未提交改动（{} 个）：", out.dirty.len());
+        for (m, n) in &out.dirty {
+            eprintln!("     {m}: {n} 处改动还没提交");
         }
+        eprintln!("  先提交，再谈并入");
+        eprintln!();
     }
-    eprintln!();
-    eprintln!("  主干合并需在代码托管平台发起 Merge Request 并完成评审");
+    // 登记了却没检出目录的模块根本没被检查，不能让它悄悄消失
+    if !out.missing.is_empty() {
+        eprintln!("⚠ 工作区里没有检出（{} 个）：", out.missing.len());
+        for m in &out.missing {
+            eprintln!("     {m}");
+        }
+        eprintln!("  这些模块没有被检查，不能算已并入");
+        eprintln!();
+    }
+    if !out.unmerged.is_empty() {
+        eprintln!("⚠ 尚未并入主干（{} 个）：", out.unmerged.len());
+        for (m, n) in &out.unmerged {
+            // n=0 是「连领先多少都读不到」的情况，别写成「0 个提交」骗人
+            if *n == 0 {
+                eprintln!("     {m}: 读不到与主干的差异");
+            } else {
+                eprintln!("     {m}: 领先主干 {n} 个提交");
+            }
+        }
+        eprintln!();
+        eprintln!("  主干合并需在代码托管平台发起 Merge Request 并完成评审");
+    }
 }
 
 // ── 元数据展示 ────────────────────────────────────────────────────────
@@ -617,9 +637,25 @@ pub fn mr_plan(plan: &MrPlan) {
     for (m, why) in &plan.skipped {
         println!("   - {m}  {why}");
     }
+    // 不干净/没推送的模块：**一个 MR 都不建**，必须显眼地报出来
+    for (m, why) in &plan.blocked {
+        eprintln!("   ✗ {m}  {why}");
+    }
+    if !plan.not_selected.is_empty() {
+        warn(format!(
+            "本次没选这些模块，不会进 MR：{}",
+            plan.not_selected.join("、")
+        ));
+    }
 
-    if plan.rows.is_empty() && plan.skipped.is_empty() {
+    if plan.rows.is_empty() && plan.skipped.is_empty() && plan.blocked.is_empty() {
         warn("没有任何模块需要提 MR");
+    } else if !plan.blocked.is_empty() {
+        eprintln!();
+        eprintln!(
+            "  有 {} 个模块被拦住，本次没有创建任何 MR",
+            plan.blocked.len()
+        );
     } else if !plan.is_dry_run {
         println!();
         let created = plan.created_count();

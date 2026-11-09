@@ -452,6 +452,107 @@ pub fn push_with(
     Ok(out)
 }
 
+// ══ commit：把待提交的改动先落到本地 ═══════════════════════════════════
+
+/// 提交的结果。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct CommitOutcome {
+    /// 提交成功的模块与改动条目数。
+    pub committed: Vec<(String, u64)>,
+    /// 本来就没有改动（无需提交）的模块。
+    pub clean: Vec<String>,
+    /// 有未解决冲突、被跳过的模块。
+    pub conflicts: Vec<String>,
+    pub failed: Vec<(String, String)>,
+}
+
+impl CommitOutcome {
+    pub fn is_clean(&self) -> bool {
+        self.failed.is_empty() && self.conflicts.is_empty()
+    }
+}
+
+/// 把选中模块的未提交改动 `git add -A` 后提交。
+///
+/// 这是「推送」之前缺的一步：原来只能推送，改了代码还得回 IDE 终端里
+/// 自己 add + commit。消息留空时自动生成一条，不至于提交出空说明。
+pub fn commit(
+    hub: &Hub,
+    ws: &Workspace,
+    filter: &ModuleFilter,
+    message: &str,
+) -> Result<CommitOutcome> {
+    commit_with(hub, ws, filter, message, None)
+}
+
+/// 带进度的 [`commit`]（理由见 [`push_with`]）。
+pub fn commit_with(
+    hub: &Hub,
+    ws: &Workspace,
+    filter: &ModuleFilter,
+    message: &str,
+    cb: crate::progress::Progress<'_>,
+) -> Result<CommitOutcome> {
+    let branch = ws.branch().to_string();
+    let modules = selected(ws, filter, &hub.dochub_name())?;
+    let text = match message.trim() {
+        "" => format!("chore: 提交 {branch} 的改动"),
+        m => m.to_string(),
+    };
+    let mut out = CommitOutcome::default();
+
+    let mut rep = crate::progress::Reporter::start(cb, modules.len(), "提交本地改动");
+    for m in &modules {
+        let git = Git::new(ws.module_path(m));
+
+        // 冲突现场不能 add：那会把冲突标记整段提交上去
+        let unmerged = match git.unmerged_paths() {
+            Ok(v) => v,
+            Err(e) => {
+                out.failed.push((m.clone(), e.to_string()));
+                rep.fail(m.clone(), e.to_string());
+                continue;
+            }
+        };
+        if !unmerged.is_empty() {
+            out.conflicts.push(m.clone());
+            rep.fail(m.clone(), format!("有 {} 个冲突文件未解决", unmerged.len()));
+            continue;
+        }
+
+        let dirty = match git.dirty_count() {
+            Ok(n) => n,
+            Err(e) => {
+                out.failed.push((m.clone(), e.to_string()));
+                rep.fail(m.clone(), e.to_string());
+                continue;
+            }
+        };
+        if dirty == 0 {
+            out.clean.push(m.clone());
+            rep.ok(format!("{m}（无改动）"));
+            continue;
+        }
+
+        if let Err(e) = git.add_all().and_then(|()| git.commit_message(&text)) {
+            // add 之后索引仍为空（例如只剩被忽略的文件）不是错误
+            if git.dirty_count().unwrap_or(0) == 0 {
+                out.clean.push(m.clone());
+                rep.ok(format!("{m}（无改动）"));
+            } else {
+                out.failed.push((m.clone(), e.to_string()));
+                rep.fail(m.clone(), e.to_string());
+            }
+            continue;
+        }
+        out.committed.push((m.clone(), dirty));
+        rep.ok(format!("{m}（{dirty} 处改动）"));
+    }
+    rep.finish();
+
+    Ok(out)
+}
+
 // ══ pull ═══════════════════════════════════════════════════════════════
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -1162,16 +1263,23 @@ pub struct DoneOutcome {
     pub merged: Vec<String>,
     /// 尚未并入主干的模块及领先提交数。
     pub unmerged: Vec<(String, u64)>,
+    /// 还有未提交改动的模块。改动没进提交，就谈不上「已并入」。
+    pub dirty: Vec<(String, u64)>,
+    /// 元数据里登记了、但工作区里没有检出目录的模块。
+    ///
+    /// 这些模块原来被 `present_modules` 直接过滤掉，于是「一个都没检查」
+    /// 也会得出「全部已并入」——正是实测反馈的误报。
+    pub missing: Vec<String>,
 }
 
 impl DoneOutcome {
     pub fn is_done(&self) -> bool {
-        self.unmerged.is_empty()
+        self.unmerged.is_empty() && self.dirty.is_empty() && self.missing.is_empty()
     }
 
     /// 检查过的模块总数。
     pub fn total(&self) -> usize {
-        self.merged.len() + self.unmerged.len()
+        self.merged.len() + self.unmerged.len() + self.dirty.len()
     }
 }
 
@@ -1187,11 +1295,22 @@ pub fn done(
 ) -> Result<DoneOutcome> {
     let modules = selected(ws, filter, &hub.dochub_name())?;
     let mut out = DoneOutcome::default();
+    // 登记了却没有检出目录的模块：不能因为 `selected()` 里被过滤掉，
+    // 就让结论悄悄变成「全部已并入」
+    let present = ws.present_modules();
+    out.missing = ws
+        .meta()
+        .modules
+        .iter()
+        .filter(|m| !present.iter().any(|p| p == *m))
+        .cloned()
+        .collect();
     let mut rep = crate::progress::Reporter::start(cb, modules.len(), "检查是否已并入主干");
 
     for m in &modules {
         let Ok(repo) = Repo::open(hub, m) else {
             rep.fail(m.clone(), "仓库不存在");
+            out.unmerged.push((m.clone(), 0));
             continue;
         };
         let main = match repo.main_branch() {
@@ -1206,6 +1325,22 @@ pub fn done(
         };
         let _ = repo.git().fetch();
         let git = Git::new(ws.module_path(m));
+
+        // 改动还在工作区里 → 根本没进提交，不能算「已并入」
+        match git.dirty_count() {
+            Ok(n) if n > 0 => {
+                rep.fail(m.clone(), format!("有 {n} 个未提交改动"));
+                out.dirty.push((m.clone(), n));
+                continue;
+            }
+            Ok(_) => {}
+            Err(_) => {
+                rep.fail(m.clone(), "读不到未提交状态");
+                out.unmerged.push((m.clone(), 0));
+                continue;
+            }
+        }
+
         match git.count_ahead("HEAD", &format!("origin/{main}")) {
             Ok(0) => {
                 rep.ok(m.clone());

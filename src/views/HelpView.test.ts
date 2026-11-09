@@ -79,4 +79,12 @@ describe("使用帮助", () => {
     expect(text, "选填也要问，说明默认").toContain("不填用默认");
     expect(text, "开场说明不该罗列阅读清单").toContain("不罗列要读的文件");
   });
+
+  it("说明「提交」默认不推送，以及合并检查能看到作者和时间", () => {
+    const text = mount(HelpView).text();
+    expect(text, "提交是新增的独立步骤").toContain("提交后直接推送到远程");
+    expect(text, "默认不推送要说清楚").toContain("默认不推送");
+    expect(text, "合并检查的历史要带作者").toContain("作者和提交时间");
+    expect(text, "漏合要能报出来").toContain("真的都进了环境");
+  });
 });

@@ -5,6 +5,7 @@
 
 import type {
   CloseOutcome,
+  CommitOutcome,
   DoneOutcome,
   MergeOutcome,
   MrPlan,
@@ -185,17 +186,33 @@ export function syncLines(o: SyncOutcome): string[] {
 
 export function doneLines(o: DoneOutcome): string[] {
   const out: string[] = [];
-  const total = o.merged.length + o.unmerged.length;
+  const total = o.merged.length + o.unmerged.length + o.dirty.length;
 
   if (o.merged.length) {
     out.push(`已并入主干（${o.merged.length}/${total}）：`);
     for (const m of o.merged) out.push(`     ✓ ${m}`);
   }
-  if (!o.unmerged.length) {
+  // **未提交改动不能算「已并入」**：它连提交都不是，主干上不可能有
+  if (o.dirty.length) {
+    if (out.length) out.push("");
+    out.push(`有未提交改动（${o.dirty.length}）：`);
+    for (const [m, n] of o.dirty) out.push(`     ${m}: ${n} 处改动还没提交`);
+    out.push("  先「提交」再检查——没进提交的代码谈不上已并入");
+  }
+  // 登记了却没检出目录的模块也没被检查，不能让它悄悄消失
+  if (o.missing.length) {
+    if (out.length) out.push("");
+    out.push(`工作区里没有检出（${o.missing.length}）：`);
+    for (const m of o.missing) out.push(`     ${m}`);
+    out.push("  这些模块没有被检查，不能算已并入");
+  }
+
+  if (!o.unmerged.length && !o.dirty.length && !o.missing.length) {
     out.push("");
     out.push("✓ 全部模块都已并入主干，这个需求可以删掉了");
     return out;
   }
+  if (!o.unmerged.length) return out;
 
   if (out.length) out.push("");
   out.push(`尚未并入主干（${o.unmerged.length}/${total}）：`);
@@ -205,6 +222,20 @@ export function doneLines(o: DoneOutcome): string[] {
   }
   out.push("");
   out.push("  主干合并走「提 MR」，评审通过后才算并入");
+  return out;
+}
+
+export function commitLines(o: CommitOutcome): string[] {
+  const out: string[] = [];
+  for (const [m, n] of o.committed) out.push(`✓ ${m}  已提交 ${n} 处改动`);
+  for (const m of o.clean) out.push(`- ${m}  没有待提交的改动`);
+  for (const m of o.conflicts) out.push(`✗ ${m}  有未解决的冲突，先解冲突再提交`);
+  for (const [m, why] of o.failed) out.push(`✗ ${m}  ${why}`);
+  if (!out.length) out.push("没有需要提交的改动");
+  if (o.committed.length) {
+    out.push("");
+    out.push(`已提交 ${o.committed.length} 个模块（还没推送；确认无误后点「推送」）`);
+  }
   return out;
 }
 

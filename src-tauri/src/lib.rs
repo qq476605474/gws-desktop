@@ -91,6 +91,7 @@ pub fn run() {
             commands::deploy::repo_share_import,
             // 同步与合并
             commands::sync::ws_push,
+            commands::sync::ws_commit,
             commands::sync::ws_pull,
             commands::sync::ws_merge,
             commands::sync::ws_sync_main,

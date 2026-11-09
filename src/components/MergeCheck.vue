@@ -38,6 +38,12 @@ const pushing = ref(false);
 const browse = ref<{ dir: string; repo: string; label: string; base: string | null } | null>(null);
 
 const conflicts = computed(() => rows.value.filter((r) => r.conflict));
+/** 需求分支的提交**没有全部进环境**（按补丁比对，看 merged 而不是猜）。 */
+const unmerged = computed(() => rows.value.filter((r) => !r.merged && !r.conflict));
+/** 环境目录里还有未提交的改动 → 环境里是「半合并」状态。 */
+const dirty = computed(() => rows.value.filter((r) => r.dirty > 0));
+/** 环境目录检出的不是应有的分支 → 后面的检查都不可信。 */
+const wrongBranch = computed(() => rows.value.filter((r) => !r.branch_ok));
 const unpushed = computed(() => rows.value.filter((r) => r.unpushed > 0));
 const totalCommits = computed(() => rows.value.reduce((n, r) => n + r.commits.length, 0));
 
@@ -147,12 +153,40 @@ async function pushAll() {
         <!-- 模块一多会把内容顶出窗口 —— 这一层自己滚（实测反馈）。
              `max-height` 用 vh 而不是 flex：模态框的内容区不吃父级高度。 -->
         <div class="scroll">
-        <!-- 结论先摆出来：冲突最要紧，其次「没推」 -->
-        <NCard v-if="conflicts.length" size="small" class="verdict bad">
+        <!-- 结论先摆出来：检出分支不对最要紧（后面的检查都不可信），
+             其次冲突、没合进去、没提交，最后才是「没推」 -->
+        <NCard v-if="wrongBranch.length" size="small" class="verdict bad">
+          <span class="v-title">有 {{ wrongBranch.length }} 个模块的环境目录不在应有的分支上</span>
+          <div class="muted small">
+            这些目录当前检出的不是环境分支，下面的结果不可信。
+            <template v-for="r in wrongBranch" :key="r.module">
+              <br /><code class="mono">{{ r.module }}</code>：当前
+              <code class="mono">{{ r.head_branch || "（游离/未知）" }}</code>，应为
+              <code class="mono">{{ r.env_branch }}</code>
+            </template>
+            <br />先重新同步该环境，再点「重新检查」。
+          </div>
+        </NCard>
+        <NCard v-else-if="conflicts.length" size="small" class="verdict bad">
           <span class="v-title">有 {{ conflicts.length }} 个模块存在未解决的冲突</span>
           <div class="muted small">
             合并卡在中途，环境里是**半合并状态**。每个模块右边的「用编辑器解决冲突」
             会直接打开 <code>envs/{{ env }}/&lt;模块&gt;</code>，解完提交后再点一次「重新检查」。
+          </div>
+        </NCard>
+        <!-- **这就是实测的误报**：原来只看冲突和未推送，有代码没合进去也说「都合进去了」 -->
+        <NCard v-else-if="unmerged.length" size="small" class="verdict bad">
+          <span class="v-title">有 {{ unmerged.length }} 个模块的代码还没合进 {{ env }}</span>
+          <div class="muted small">
+            每个模块标题下会写还差几个提交。重新执行「合并到环境」（必要时勾上「强制」），
+            合完再点一次「重新检查」。
+          </div>
+        </NCard>
+        <NCard v-else-if="dirty.length" size="small" class="verdict warn">
+          <span class="v-title">环境里有 {{ dirty.length }} 个模块存在未提交的改动</span>
+          <div class="muted small">
+            合并可能只做了一半，或有人在环境目录里改过东西。先确认这些改动，
+            再重新合并一次。
           </div>
         </NCard>
         <NCard
@@ -160,13 +194,13 @@ async function pushAll() {
           size="small"
           class="verdict warn"
         >
-          <span class="v-title">合并干净，但有 {{ unpushed.length }} 个模块还没推上远程</span>
+          <span class="v-title">代码都已合入，但有 {{ unpushed.length }} 个模块还没推上远程</span>
           <div class="muted small">
             线上（和测试环境）看到的还是旧的。点右上角补推一次。
           </div>
         </NCard>
         <NCard v-else-if="rows.length" size="small" class="verdict ok">
-          <span class="v-title">合并干净、也已全部推送</span>
+          <span class="v-title">代码已全部合入，也已全部推送</span>
           <div class="muted small">共 {{ rows.length }} 个模块、{{ totalCommits }} 个提交进了 {{ env }}。</div>
         </NCard>
         <p v-if="!rows.length" class="muted">
@@ -178,6 +212,18 @@ async function pushAll() {
             <span class="mono">{{ r.module }}</span>
             <NTag v-if="r.conflict" size="tiny" type="error" :bordered="false" class="tag">冲突</NTag>
             <NTag
+              v-else-if="!r.merged"
+              size="tiny"
+              type="error"
+              :bordered="false"
+              class="tag"
+            >
+              未合入<template v-if="r.missing"> {{ r.missing }}</template>
+            </NTag>
+            <NTag v-else-if="r.dirty > 0" size="tiny" type="warning" :bordered="false" class="tag">
+              未提交 {{ r.dirty }}
+            </NTag>
+            <NTag
               v-else-if="r.unpushed > 0"
               size="tiny"
               type="warning"
@@ -187,6 +233,9 @@ async function pushAll() {
               未推送 {{ r.unpushed }}
             </NTag>
             <NTag v-else size="tiny" type="success" :bordered="false" class="tag">已推送</NTag>
+            <NTag v-if="!r.branch_ok" size="tiny" type="error" :bordered="false" class="tag">
+              分支不对
+            </NTag>
             <span class="muted small">{{ r.commits.length }} 个提交 · {{ r.files }} 个文件</span>
           </template>
           <template #header-extra>
@@ -220,9 +269,20 @@ async function pushAll() {
           <div v-if="r.conflict" class="conflict">
             <div v-for="f in r.conflict_files" :key="f" class="mono small">✗ {{ f }}</div>
           </div>
+          <div v-if="!r.merged && r.missing" class="gap small">
+            需求分支还有 <b>{{ r.missing }}</b> 个提交没进 {{ env }} —— 这些代码现在不在环境里。
+          </div>
+          <div v-if="r.dirty > 0" class="gap small">
+            环境目录里有 <b>{{ r.dirty }}</b> 处未提交改动（合并可能没走完）。
+          </div>
           <div v-if="r.commits.length" class="commits">
-            <div v-for="[sha, subject] in r.commits.slice(0, 30)" :key="sha" class="mono small">
-              <span class="sha">{{ sha }}</span> {{ subject }}
+            <div v-for="c in r.commits.slice(0, 30)" :key="c.sha" class="commit-row small">
+              <span class="sha mono">{{ c.sha }}</span>
+              <span class="subject" :title="c.subject">{{ c.subject }}</span>
+              <span class="meta">
+                <span class="who">{{ c.author }}</span>
+                <span class="when">{{ c.date }}</span>
+              </span>
             </div>
             <p v-if="r.commits.length > 30" class="muted small">
               还有 {{ r.commits.length - 30 }} 个提交未列出
@@ -291,8 +351,35 @@ async function pushAll() {
   max-height: 200px;
   overflow: auto;
 }
+.commit-row {
+  display: grid;
+  /* sha 长度随仓库的缩写配置变（7~9 位都有），写死宽度就会换行 ——
+     交给内容自己撑开。 */
+  grid-template-columns: max-content minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+.commit-row .subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-row .meta {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
 .sha {
   color: #888;
+  white-space: nowrap;
+}
+.who {
+  color: #666;
+}
+.when {
+  color: #999;
+  font-variant-numeric: tabular-nums;
 }
 .conflict {
   margin-bottom: 6px;
@@ -314,6 +401,10 @@ async function pushAll() {
   font-size: 12px;
 }
 .err {
+  color: #d03050;
+}
+.gap {
+  margin: 4px 0;
   color: #d03050;
 }
 </style>

@@ -26,6 +26,8 @@ const { BRANCH, DEFAULT_TITLE, DEFAULT_DESC, fakePlan } = vi.hoisted(() => {
       reviewers: { frontend: "alice", backend: "bob", source: "全局配置" },
       rows: [],
       skipped: [],
+      blocked: [],
+      not_selected: [],
       registered: {},
       is_dry_run: true,
       ...over,

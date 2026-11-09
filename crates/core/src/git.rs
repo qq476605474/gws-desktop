@@ -272,8 +272,45 @@ impl Git {
         self.status(&["-c", "core.editor=true", "commit", "--quiet", "--no-edit"])
     }
 
+    /// 把索引退回 `HEAD`（`git reset --quiet`），**不动工作树**。
+    ///
+    /// 「撤销改动」必须先做这一步：`git checkout -- .` 是从**索引**还原工作树，
+    /// 已经 `git add` 过的内容会原样留在索引里，撤销完状态依然不干净 ——
+    /// 用户看到的就是「撤销不掉」（实测反馈）。
+    pub fn unstage_all(&self) -> Result<()> {
+        self.status(&["reset", "--quiet"])
+    }
+
+    /// 把工作树里的全部改动（含新增、删除）加进索引。
+    pub fn add_all(&self) -> Result<()> {
+        self.status(&["add", "-A"])
+    }
+
+    /// 用给定消息提交当前索引。索引为空时 git 会非零退出，由调用方判断。
+    pub fn commit_message(&self, message: &str) -> Result<()> {
+        self.status(&["commit", "--quiet", "-m", message])
+    }
+
     pub fn reset_hard(&self, target: &str) -> Result<()> {
         self.status(&["reset", "--hard", "--quiet", target])
+    }
+
+    /// 当前目录下**被 git 忽略**的条目名（目录以名字返回，不带结尾 `/`）。
+    ///
+    /// 文件浏览要用它把 `.idea`、`dist`、`node_modules` 这类东西藏掉。
+    /// 走 `git ls-files` 而不是自己解析 `.gitignore`：嵌套规则、全局 excludes、
+    /// `.git/info/exclude` 全都交给 git，口径与 `git status` 一致。
+    /// 不在仓库里时返回空表 —— 此时不隐藏任何东西，而不是报错。
+    pub fn ignored_entry_names(&self) -> Vec<String> {
+        self.out(&["ls-files", "-o", "-i", "--exclude-standard", "--directory"])
+            .map(|text| {
+                text.lines()
+                    .filter_map(|line| line.trim().split('/').next())
+                    .filter(|name| !name.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// 清理未跟踪文件。
@@ -526,6 +563,19 @@ impl Git {
         Ok(self.status_lines(false)?.len() as u64)
     }
 
+    /// 同 [`Self::dirty_count`]，但**不计 `keep` 里的路径**。
+    ///
+    /// `git clean` 会刻意保留 `node_modules` / `target` / `.idea` 这类目录。
+    /// 如果事后校验仍把它们算成「脏」，撤销就永远是失败的 ——
+    /// 而它们本来就不该被撤销掉。
+    pub fn dirty_count_excluding(&self, keep: &[&str]) -> Result<u64> {
+        Ok(self
+            .status_lines(false)?
+            .iter()
+            .filter(|line| !is_kept(porcelain_path(line), keep))
+            .count() as u64)
+    }
+
     /// `status --porcelain` 的行，**滤掉操作系统垃圾文件**。
     ///
     /// # 所有「有没有未提交改动」的判断都必须走这里
@@ -577,7 +627,15 @@ impl Git {
     /// 但提交 SHA 变了、祖先关系不成立。`git cherry` 按补丁内容比对，
     /// 输出 `+` 的才是主干里真正没有的提交。
     pub fn count_not_upstream(&self, upstream: &str) -> Result<u64> {
-        let out = self.out(&["cherry", upstream, "HEAD"])?;
+        self.count_cherry(upstream, "HEAD")
+    }
+
+    /// `git cherry <upstream> <head>` 里 `+` 的条数：`head` 中补丁还不在 `upstream` 的提交。
+    ///
+    /// 与 [`Self::count_not_upstream`] 的区别只是能指定 head ——
+    /// 「环境里有没有这个需求的代码」需要拿环境的 HEAD 当 upstream。
+    pub fn count_cherry(&self, upstream: &str, head: &str) -> Result<u64> {
+        let out = self.out(&["cherry", upstream, head])?;
         Ok(out.lines().filter(|l| l.starts_with('+')).count() as u64)
     }
 
@@ -1041,9 +1099,21 @@ fn porcelain_path(line: &str) -> &str {
 /// 是不是操作系统自动生成的垃圾文件（永远不该被提交，也不该算「未提交改动」）。
 ///
 /// `.DS_Store` 与 `._*` 来自 macOS，`Thumbs.db` / `desktop.ini` 来自 Windows。
-fn is_os_junk(path: &str) -> bool {
+pub fn is_os_junk(path: &str) -> bool {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
     matches!(name, ".DS_Store" | "Thumbs.db" | "desktop.ini") || name.starts_with("._")
+}
+
+/// porcelain 里的路径是否落在 `keep` 目录之下（`git clean -e` 保留的那些）。
+pub(crate) fn is_kept(path: &str, keep: &[&str]) -> bool {
+    let path = path.trim_end_matches('/');
+    keep.iter().any(|k| {
+        path == *k
+            || path
+                .strip_prefix(k)
+                .map(|rest| rest.starts_with('/'))
+                .unwrap_or(false)
+    })
 }
 
 #[cfg(test)]

@@ -1147,7 +1147,8 @@ fn cmd_mr(args: MrArgs) -> Result<ExitCode> {
         args.create,
         Some(&gws_core::progress::stderr_reporter),
     )?;
-    let has_failure = plan.failed().next().is_some();
+    // 被拦住的模块没有对应的 row，但它确实让本次「一个 MR 都没建」——算失败
+    let has_failure = plan.failed().next().is_some() || !plan.blocked.is_empty();
     render::mr_plan(&plan);
 
     if args.create {

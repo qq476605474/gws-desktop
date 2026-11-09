@@ -85,7 +85,7 @@ const probe = ref<RemoteProbe[] | null>(null);
 const probing = ref(false);
 
 /** 弹窗状态：`null` = 没开；否则是要执行的操作名。 */
-const op = ref<null | "push" | "pull" | "merge" | "push-env" | "sync-main">(null);
+const op = ref<null | "push" | "pull" | "commit" | "merge" | "push-env" | "sync-main">(null);
 /**
  * 预勾选的模块。空 = 全选。
  *
@@ -548,6 +548,25 @@ async function runOp(p: OpPayload): Promise<string[] | OpResult> {
       // 但 rebase 会改写本地提交顺序，得让人显式选并看到代价说明）
       case "pull":
         return fmt.pullLines(await api.wsPull(branch.value, p.rebase, filter));
+      // 「提交」默认只提交；勾了「提交后推送」才接着推。
+      // 推送范围跟着提交结果走：冲突/失败的模块不推（推了也没意义）。
+      case "commit": {
+        const out = await api.wsCommit(branch.value, p.message, filter);
+        const lines = fmt.commitLines(out);
+        if (!p.push) return lines;
+        const bad = new Set([...out.conflicts, ...out.failed.map(([m]) => m)]);
+        const pushable = [...out.committed.map(([m]) => m), ...out.clean].filter(
+          (m) => !bad.has(m),
+        );
+        lines.push("");
+        if (!pushable.length) {
+          lines.push("没有可推送的模块（提交没有成功）");
+          return lines;
+        }
+        lines.push(`继续推送 ${pushable.length} 个模块…`);
+        lines.push(...fmt.pushLines(await api.wsPush(branch.value, { only: pushable })));
+        return lines;
+      }
       // 合并与「合并到环境并推送」合成一个入口，推不推在弹窗里勾（反馈 #4）。
       // 默认不推——推了远程上立刻可见，该由人显式选。
       case "merge": {
@@ -580,6 +599,8 @@ const opTitle = computed(() => {
       return "推送需求分支到远程";
     case "pull":
       return "拉取远程上同一分支的提交";
+    case "commit":
+      return "提交本地改动";
     case "merge":
       return "合并到环境";
     case "push-env":
@@ -595,6 +616,8 @@ const opHint = computed(() => {
   switch (op.value) {
     case "push":
       return "推送后远程上才看得到你的提交。若有模块落后远程，会先提示你先拉取。";
+    case "commit":
+      return "把选中模块里所有待提交的改动 git add 并提交。提交说明默认按 Conventional Commits 填（类型 / 影响范围 / 描述 / 正文，正文一行一条），也可切「自由填写」；描述留空仍用默认说明。默认**不推送**，需要一步到位就勾下面的「提交后直接推送到远程」。";
     case "merge":
       return "默认只合到本地 envs/<环境>。要推到远程环境分支（远程上立刻可见）请勾下面的「合并后推送」。";
     case "push-env":
@@ -864,6 +887,10 @@ async function commitEdit() {
           <NButton size="small" :loading="probing" @click="checkRemoteNow">检查远程</NButton>
           <NButton size="small" :disabled="!opModules.length" @click="openOp('pull')">
             拉取
+          </NButton>
+          <!-- 先提交、再推送：AI 写完代码人 review 完就能提交（实测反馈） -->
+          <NButton size="small" :disabled="!opModules.length" @click="openOp('commit')">
+            提交
           </NButton>
           <NButton size="small" :disabled="!opModules.length" @click="openOp('push')">
             推送
@@ -1143,6 +1170,8 @@ async function commitEdit() {
       :push-by-default="op === 'push-env'"
       :with-force="op === 'merge'"
       :with-rebase="op === 'pull'"
+      :with-commit="op === 'commit'"
+      :with-commit-push="op === 'commit'"
       :action="runOp"
       @close="op = null; opPreselect = null"
       @done="afterOp"

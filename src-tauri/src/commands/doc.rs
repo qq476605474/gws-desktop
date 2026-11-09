@@ -67,10 +67,10 @@ fn has_file_under(dir: &std::path::Path) -> bool {
     };
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().to_string();
-        if name == ".DS_Store" || name.starts_with("._") {
+        let p = e.path();
+        if skip_entry(&name, p.is_dir()) {
             continue;
         }
-        let p = e.path();
         if p.is_dir() {
             if has_file_under(&p) {
                 return true;
@@ -98,6 +98,11 @@ pub(crate) fn to_slash(s: &str) -> String {
     s.replace('\\', "/")
 }
 
+/// 文档树里永远不该露出来的条目：系统垃圾 + 点开头的目录（`.git` / `.idea` 等）。
+fn skip_entry(name: &str, is_dir: bool) -> bool {
+    gws_core::git::is_os_junk(name) || (is_dir && name.starts_with('.'))
+}
+
 /// 收集**空的**目录（相对 root 的路径）。只收最外层的空目录，不往它里面再走。
 fn collect_empty_dirs(root: &std::path::Path, dir: &std::path::Path, out: &mut Vec<String>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -106,6 +111,9 @@ fn collect_empty_dirs(root: &std::path::Path, dir: &std::path::Path, out: &mut V
     for e in entries.flatten() {
         let p = e.path();
         if !p.is_dir() {
+            continue;
+        }
+        if skip_entry(&e.file_name().to_string_lossy(), true) {
             continue;
         }
         if has_file_under(&p) {
@@ -126,6 +134,9 @@ fn collect(
     };
     for entry in entries.flatten() {
         let path = entry.path();
+        if skip_entry(&entry.file_name().to_string_lossy(), path.is_dir()) {
+            continue;
+        }
         if path.is_dir() {
             collect(root, &path, out)?;
         } else if let Ok(rel) = path.strip_prefix(root) {

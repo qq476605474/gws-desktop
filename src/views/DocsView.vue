@@ -76,6 +76,21 @@ async function load() {
     err.value = "";
     // 只有一个族时默认展开，省一次点击
     if (families.value.length === 1) expanded.value = new Set([families.value[0].name]);
+    // **重读当前选中的那一期**：撤销改动 / 同步之后文件已经变了，
+    // 但右边那棵树还停在上一次的读数，看着像「撤销没生效」。
+    const sel = selected.value;
+    if (sel) {
+      const fresh = families.value
+        .find((f) => f.name === sel.family)
+        ?.periods.find((p) => p.branch === sel.period.branch);
+      if (fresh) {
+        await pick(sel.family, fresh);
+      } else {
+        selected.value = null;
+        tree.value = [];
+        resolved.value = null;
+      }
+    }
   } catch (e) {
     err.value = api.errText(e);
   } finally {
