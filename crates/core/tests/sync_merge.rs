@@ -370,8 +370,9 @@ fn merge_recovers_when_the_env_branch_was_rebuilt_by_force_push() {
     f.colleague_pushes("main", "trunk.txt", "trunk moved");
     git(&f.origin, &["update-ref", "refs/heads/dev", "refs/heads/main"]);
 
-    let out = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
-
+    // 远程被重建必须由人显式确认（force）：默认不再自动重置，
+    // 因为本地那份提交里可能包含刚解完的冲突，自动清掉会让人重解一遍。
+    let out = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, true).unwrap();
     assert_eq!(out.stale, vec![MODULE], "应识别出远程被重建：{out:?}");
     assert_eq!(out.clean, vec![MODULE], "重置后应继续完成合并，而不是等下一次：{out:?}");
     assert!(f.env_wt("dev").join("feat.txt").is_file(), "出问题了：{out:?}");
@@ -435,6 +436,61 @@ fn merge_reports_conflict_and_keeps_the_env_scene_for_ide() {
     let dir = out.conflict_dirs.get(MODULE).expect("应给出冲突目录供界面打开");
     let content = std::fs::read_to_string(Path::new(dir).join("same.txt")).unwrap();
     assert!(content.contains("<<<<<<<"), "冲突现场要留给人解决: {content}");
+}
+
+#[test]
+fn merge_keeps_the_conflict_scene_when_remote_env_advances() {
+    // 实测反馈：同一个文件被要求解两次。旧版在「远程环境分支前进」时无条件
+    // reset，冲突现场连人没解完的部分一起被清掉，下一次还得从头再来。
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    commit_file(&f.wt("feature-x"), "same.txt", "feature\n", "feature");
+    sync::push(&f.hub, &ws, &ModuleFilter::all()).unwrap();
+    f.colleague_pushes("dev", "same.txt", "dev-side\n");
+
+    let first = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
+    assert!(first.has_conflicts());
+    assert!(first.resumed_conflicts.is_empty(), "第一次是真·新冲突");
+
+    // 人还没解完，远程环境又前进了一个提交
+    f.colleague_pushes("dev", "other.txt", "x\n");
+    let second = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
+
+    assert_eq!(second.conflicts, vec![MODULE]);
+    assert_eq!(second.resumed_conflicts, vec![MODULE], "应报「上次没解完」");
+    assert_eq!(
+        second.conflict_files.get(MODULE).unwrap(),
+        &vec!["same.txt".to_string()]
+    );
+    let content = std::fs::read_to_string(f.env_wt("dev").join("same.txt")).unwrap();
+    assert!(content.contains("<<<<<<<"), "冲突现场必须原样保留: {content}");
+}
+
+#[test]
+fn merge_keeps_a_resolved_but_unpushed_conflict_when_remote_env_advances() {
+    // 人解完并 git add 了，但还没推；此时远程环境前进 —— 不能 reset 掉成果，
+    // 否则同一个文件又要重解一遍。
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    commit_file(&f.wt("feature-x"), "same.txt", "feature\n", "feature");
+    sync::push(&f.hub, &ws, &ModuleFilter::all()).unwrap();
+    f.colleague_pushes("dev", "same.txt", "dev-side\n");
+
+    sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
+    let wt = f.env_wt("dev");
+    std::fs::write(wt.join("same.txt"), "resolved\n").unwrap();
+    git(&wt, &["add", "same.txt"]);
+
+    f.colleague_pushes("dev", "other.txt", "x\n");
+    let out = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
+
+    assert!(out.conflicts.is_empty(), "已解完不应再报冲突: {out:?}");
+    assert_eq!(out.pending.len(), 1, "解完的合并成果应保留并待推: {out:?}");
+    assert_eq!(
+        std::fs::read_to_string(wt.join("same.txt")).unwrap(),
+        "resolved\n",
+        "解好的内容不能被重置掉"
+    );
 }
 
 #[test]

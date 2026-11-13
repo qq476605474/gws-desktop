@@ -829,11 +829,6 @@ function gitlabUrlOf(remote: string): string | null {
                   >
                     打开目录
                   </NButton>
-                  <EditorButton
-                    size="tiny"
-                    :path="`${app.hub!.root}/repos/${docName}`"
-                    :disabled="!app.hub?.dochub_ready"
-                  />
                   <NButton
                     size="tiny"
                     secondary
@@ -842,15 +837,11 @@ function gitlabUrlOf(remote: string): string | null {
                   >
                     复制目录
                   </NButton>
-                  <NButton
+                  <EditorButton
                     size="tiny"
-                    secondary
-                    type="primary"
-                    :disabled="!gitlabUrlOfDoc"
-                    @click="openUrl(gitlabUrlOfDoc!)"
-                  >
-                    GitLab
-                  </NButton>
+                    :path="`${app.hub!.root}/repos/${docName}`"
+                    :disabled="!app.hub?.dochub_ready"
+                  />
                   <NButton
                     size="tiny"
                     secondary
@@ -864,6 +855,15 @@ function gitlabUrlOf(remote: string): string | null {
                     @click="browse = { dir: `${app.hub!.root}/repos/${docName}`, repo: docName, label: docName, mode: 'changed' }"
                   >
                     对比代码
+                  </NButton>
+                  <NButton
+                    size="tiny"
+                    secondary
+                    type="primary"
+                    :disabled="!gitlabUrlOfDoc"
+                    @click="openUrl(gitlabUrlOfDoc!)"
+                  >
+                    GitLab
                   </NButton>
                   <NButton size="tiny" secondary @click="openInfo(docName)">自定义信息</NButton>
                   <NButton size="tiny" secondary type="primary" @click="pullDochub">
@@ -884,21 +884,10 @@ function gitlabUrlOf(remote: string): string | null {
                   <NButton size="tiny" secondary @click="openInFinder(`${app.hub!.root}/repos/${r.name}`)">
                     打开目录
                   </NButton>
-                  <EditorButton size="tiny" :path="`${app.hub!.root}/repos/${r.name}`" />
                   <NButton size="tiny" secondary @click="copy(`${app.hub!.root}/repos/${r.name}`, '目录')">
                     复制目录
                   </NButton>
-                  <!-- 「复制仓库地址」已去掉：旁边就是 GitLab 按钮，点了直接开仓库页，
-                       复制一段 URL 再自己粘到浏览器是绕远路（实测反馈）。 -->
-                  <NButton
-                    v-if="gitlabUrlOf(r.remote_url)"
-                    size="tiny"
-                    secondary
-                    type="primary"
-                    @click="openUrl(gitlabUrlOf(r.remote_url)!)"
-                  >
-                    GitLab
-                  </NButton>
+                  <EditorButton size="tiny" :path="`${app.hub!.root}/repos/${r.name}`" />
                   <NButton
                     size="tiny"
                     secondary
@@ -912,6 +901,17 @@ function gitlabUrlOf(remote: string): string | null {
                     @click="browse = { dir: `${app.hub!.root}/repos/${r.name}`, repo: r.name, label: r.name, mode: 'changed' }"
                   >
                     对比代码
+                  </NButton>
+                  <!-- 「复制仓库地址」已去掉：旁边就是 GitLab 按钮，点了直接开仓库页，
+                       复制一段 URL 再自己粘到浏览器是绕远路（实测反馈）。 -->
+                  <NButton
+                    v-if="gitlabUrlOf(r.remote_url)"
+                    size="tiny"
+                    secondary
+                    type="primary"
+                    @click="openUrl(gitlabUrlOf(r.remote_url)!)"
+                  >
+                    GitLab
                   </NButton>
                   <NButton size="tiny" secondary @click="openInfo(r.name)">自定义信息</NButton>
                   <!-- 「详情」：各环境的**访问地址**只在这里能编辑（仓库 × 环境那张表），
@@ -975,15 +975,15 @@ function gitlabUrlOf(remote: string): string | null {
               <NButton size="small" type="primary" @click="openSync(e.id)">
                 同步此环境
               </NButton>
-              <NButton size="small" @click="startEditEnv(e)">改分支覆盖</NButton>
-              <NButton size="small" @click="startEditEnvMeta(e)">改环境</NButton>
               <NButton size="small" @click="openInFinder(`${app.hub!.root}/envs/${e.id}`)">
                 打开目录
               </NButton>
-              <EditorButton :path="`${app.hub!.root}/envs/${e.id}`" :secondary="false" />
               <NButton size="small" @click="copy(`${app.hub!.root}/envs/${e.id}`, '目录')">
                 复制目录
               </NButton>
+              <EditorButton :path="`${app.hub!.root}/envs/${e.id}`" :secondary="false" />
+              <NButton size="small" @click="startEditEnv(e)">改分支覆盖</NButton>
+              <NButton size="small" @click="startEditEnvMeta(e)">改环境</NButton>
               <NButton size="small" type="error" @click="rmEnv(e.id)">移除</NButton>
           </div>
 
@@ -1023,11 +1023,6 @@ function gitlabUrlOf(remote: string): string | null {
                     >
                       打开目录
                     </NButton>
-                    <EditorButton
-                      size="tiny"
-                      :path="`${app.hub!.root}/envs/${e.id}/${docName}`"
-                      :disabled="!isCheckedOut(e.id, docName)"
-                    />
                     <NButton
                       size="tiny"
                       secondary
@@ -1036,6 +1031,11 @@ function gitlabUrlOf(remote: string): string | null {
                     >
                       复制目录
                     </NButton>
+                    <EditorButton
+                      size="tiny"
+                      :path="`${app.hub!.root}/envs/${e.id}/${docName}`"
+                      :disabled="!isCheckedOut(e.id, docName)"
+                    />
                     <NButton
                       size="tiny"
                       secondary
@@ -1098,11 +1098,6 @@ function gitlabUrlOf(remote: string): string | null {
                     >
                       打开目录
                     </NButton>
-                    <EditorButton
-                      size="tiny"
-                      :path="`${app.hub!.root}/envs/${e.id}/${mod}`"
-                      :disabled="!isCheckedOut(e.id, mod)"
-                    />
                     <NButton
                       size="tiny"
                       secondary
@@ -1111,6 +1106,11 @@ function gitlabUrlOf(remote: string): string | null {
                     >
                       复制目录
                     </NButton>
+                    <EditorButton
+                      size="tiny"
+                      :path="`${app.hub!.root}/envs/${e.id}/${mod}`"
+                      :disabled="!isCheckedOut(e.id, mod)"
+                    />
                     <NButton
                       size="tiny"
                       secondary

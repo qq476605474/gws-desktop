@@ -146,7 +146,13 @@ fn revert_apply_undoes_staged_changes() {
     assert_eq!(out.reverted.len(), 1, "{out:?}");
     assert!(out.failed.is_empty(), "{out:?}");
     assert_eq!(git(&wt, &["status", "--porcelain"]), "", "已暂存的改动也应被撤销");
-    assert_eq!(std::fs::read_to_string(wt.join("README.md")).unwrap(), "# seed\n");
+    // 换行归一化再比：Windows 上 git 默认 `core.autocrlf=true`，checkout 出来是 CRLF
+    assert_eq!(
+        std::fs::read_to_string(wt.join("README.md"))
+            .unwrap()
+            .replace("\r\n", "\n"),
+        "# seed\n"
+    );
 }
 
 #[test]

@@ -139,6 +139,7 @@ pub fn run() {
             // 文件浏览与对比
             commands::danger::browse_changes,
             commands::danger::browse_read,
+            commands::danger::browse_read_image,
             commands::danger::browse_ahead_behind,
             commands::danger::browse_commits,
             commands::danger::browse_commit_files,

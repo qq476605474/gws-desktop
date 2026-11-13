@@ -758,6 +758,11 @@ pub struct MergeOutcome {
     pub conflicts: Vec<String>,
     /// 冲突模块的工作目录，供界面直接打开。
     pub conflict_dirs: BTreeMap<String, String>,
+    /// 模块 → 还没解决的文件（相对仓库根），界面要列出来才知道去改哪几个。
+    pub conflict_files: BTreeMap<String, Vec<String>>,
+    /// 这轮开始时就**已经是冲突现场**的模块。与「这次新产生的冲突」分开报，
+    /// 免得人以为自己白解了一遍（实测反馈：同一个文件被要求解两次）。
+    pub resumed_conflicts: Vec<String>,
     pub pushed: Vec<String>,
     pub push_failed: Vec<(String, String)>,
     pub did_push: bool,
@@ -920,34 +925,72 @@ pub fn merge_with(
         let gwt = Git::new(&wt);
         let _ = repo.git().fetch();
 
-        // ① 远程被重建（force push）：本地 HEAD 不再包含远程 tip → 本地副本全部作废。
-        //    必须先于冲突检测判断——此时本地的冲突现场也是基于旧基线的，一并丢弃。
-        //    重置后**不 continue**：继续往下完成合并，否则要跑两次才合得进去
-        //    。
-        if !gwt.is_ancestor(&format!("origin/{env_branch}"), "HEAD") {
-            let _ = gwt.merge_abort();
-            gwt.reset_hard(&format!("origin/{env_branch}"))?;
-            let _ = gwt.clean_untracked(CLEAN_KEEP);
-            out.stale.push(m.clone());
-        }
+        let remote_env = format!("origin/{env_branch}");
 
-        // ② 合并中途（正在解冲突）：已解完 → 补提交；还没解完 → 留现场
+        // ② 必须先看有没有**正在进行的合并**，再考虑 reset。
+        //
+        // 旧版把「远程是不是 HEAD 的祖先」放在最前面，远程一前进就 reset ——
+        // 此时人可能正在解冲突（现场被清掉），也可能已经解完并提交、只是还没推
+        // （成果被清掉）。两种情况都会让同一个文件再冲突一次，而人完全不知道
+        // 为什么（实测反馈）。有合并现场时，远程再怎么动也不能动它。
         if gwt.in_merge() {
-            if !gwt.unmerged_paths()?.is_empty() {
+            let unresolved = gwt.unmerged_paths()?;
+            if !unresolved.is_empty() {
                 out.conflicts.push(m.clone());
+                out.resumed_conflicts.push(m.clone());
                 out.conflict_dirs.insert(m.clone(), wt.to_string_lossy().to_string());
-                rep.fail(m.clone(), "冲突待处理");
+                out.conflict_files.insert(m.clone(), unresolved);
+                rep.fail(m.clone(), "冲突待处理（现场保留）");
                 continue;
             }
-            let _ = gwt.commit_no_edit();
+            // 已解完但没提交：补一次提交。**失败不能静默** —— 静默就会掉到
+            // 下面的 reset，把刚解好的内容丢了再让人解一遍。
+            gwt.commit_no_edit().map_err(|e| {
+                Error::other(format!(
+                    "{m}: 冲突已解决但自动提交失败（{e}）。\n\
+                     请到 {} 里手工执行 git commit，再重新点一次「合并到 {env_id}」。",
+                    wt.display()
+                ))
+            })?;
+        }
+
+        // ① 远程环境分支前进了：按本地有没有自己的提交分情况处理。
+        //    - ahead == 0：本地没有成果，reset 到远程就是快进，安全。
+        //    - ahead > 0：本地有成果（可能是刚解完的冲突）。**默认绝不清掉** ——
+        //      旧版在这里无条件 reset，远程一动就把解好的内容丢了，同一个文件
+        //      又要重解一遍，人还完全不知道为什么（实测反馈）。只有显式勾了
+        //      「强制重建」才丢弃本地、按远程重来。
+        let (ahead, behind) = gwt.ahead_behind(&remote_env)?;
+        if behind > 0 {
+            if ahead > 0 && !force {
+                let rebuilt = gwt
+                    .previous_ref(&remote_env)
+                    .map(|prev| !gwt.is_ancestor(&prev, &remote_env))
+                    .unwrap_or(false);
+                out.pending.push((m.clone(), ahead));
+                rep.ok(format!(
+                    "{m}（{}，本地另有 {ahead} 个未推送提交；未动）",
+                    if rebuilt {
+                        format!("环境分支在远程被重建过（远程 {behind} 个新提交）")
+                    } else {
+                        format!("环境分支远程有新提交 {behind} 个")
+                    }
+                ));
+                continue;
+            }
+            let _ = gwt.merge_abort();
+            gwt.reset_hard(&remote_env)?;
+            let _ = gwt.clean_untracked(CLEAN_KEEP);
+            if ahead > 0 {
+                out.stale.push(m.clone());
+            }
         }
 
         // ③ 已有未推送成果（含在 IDE 里完成的冲突解决提交）：不 reset、不重合
-        let ahead = gwt.count_range(&format!("origin/{env_branch}..HEAD"))?;
-        if ahead != 0 {
+        if ahead > 0 {
             if force {
                 let _ = gwt.merge_abort();
-                gwt.reset_hard(&format!("origin/{env_branch}"))?;
+                gwt.reset_hard(&remote_env)?;
                 let _ = gwt.clean_untracked(CLEAN_KEEP);
             } else {
                 out.pending.push((m.clone(), ahead));
@@ -957,7 +1000,7 @@ pub fn merge_with(
         }
 
         // ④ 镜像重置 + 从 origin/<需求分支> 合（忘记 push 就合不进去）
-        gwt.reset_hard(&format!("origin/{env_branch}"))?;
+        gwt.reset_hard(&remote_env)?;
         let _ = gwt.clean_untracked(CLEAN_KEEP);
 
         if !repo.git().remote_branch_exists(&branch) {
@@ -967,12 +1010,14 @@ pub fn merge_with(
         }
 
         let (_, _output) = gwt.merge(&format!("origin/{branch}"), false)?;
-        if gwt.unmerged_paths()?.is_empty() {
+        let unresolved = gwt.unmerged_paths()?;
+        if unresolved.is_empty() {
             out.clean.push(m.clone());
             rep.ok(m.clone());
         } else {
             out.conflicts.push(m.clone());
             out.conflict_dirs.insert(m.clone(), wt.to_string_lossy().to_string());
+            out.conflict_files.insert(m.clone(), unresolved);
             rep.fail(m.clone(), "冲突待处理");
         }
     }

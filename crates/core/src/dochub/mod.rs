@@ -1115,7 +1115,7 @@ pub fn month_family_name(created: &str) -> String {
         crate::hub::write_agent_doc_missing_only(&period, &meta::render_claude_md(&m))?;
 
         // SQL 之类的多文件类型给个目录，免得用户还得自己 mkdir
-        let _ = std::fs::create_dir_all(period.join("sql"));
+        let _ = std::fs::create_dir_all(period.join("运维文档").join("sql"));
 
         // ── 4. 回写工作区元数据 ─────────────────────────────────────────
         ws.meta_mut().doc = Some(crate::workspace::DocRef::new(
@@ -1351,8 +1351,8 @@ pub fn month_family_name(created: &str) -> String {
         }
         m.name = want;
         m.save(&path)?;
-        // 期次说明文件里也带着名字 → 重刷一遍（CLAUDE.md / AGENTS.md 两份一起）
-        crate::hub::write_agent_doc(&dir, &meta::render_claude_md(&m))?;
+        // **不再重刷 AGENTS.md**：期次说明只写通用约定（不带名字/分类/分支），
+        // 改名时它没有要改的内容；重刷反而会把用户在这份文件里的补充覆盖掉。
         Ok(true)
     }
 

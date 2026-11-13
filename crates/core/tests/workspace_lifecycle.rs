@@ -180,6 +180,30 @@ fn new_writes_metadata_only() {
 }
 
 #[test]
+fn hub_claude_md_lists_workspace_doc_folders() {
+    // 新需求通用：workspace 下的文档必须按用途分目录，不能堆在期次根目录
+    let f = Fixture::new();
+    let md = std::fs::read_to_string(f.hub.root().join("AGENTS.md")).unwrap();
+    assert!(
+        md.contains("不得直接堆在期次根目录"),
+        "要写清「必须分目录」的硬性要求"
+    );
+    for dir in [
+        "`需求文档/`",
+        "`开发文档/`",
+        "`自测文档/`",
+        "`测试文档/`",
+        "`运维文档/`",
+        "`总体设计/`",
+        "`其他文件/`",
+        "`临时文件/`",
+    ] {
+        assert!(md.contains(dir), "缺少文档目录：{dir}");
+    }
+    assert!(md.contains("保留在期次根目录"), "要说明根目录保留哪几个文件");
+}
+
+#[test]
 fn hub_claude_md_allows_fixing_a_bad_merge_in_the_env() {
     // 实测反馈：环境默认「完全不让 AI 动」，但**合错代码**时需要在环境分支上
     // 就地改并提交 —— 所以开了这一个例外。

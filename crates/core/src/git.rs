@@ -295,17 +295,22 @@ impl Git {
         self.status(&["reset", "--hard", "--quiet", target])
     }
 
-    /// 当前目录下**被 git 忽略**的条目名（目录以名字返回，不带结尾 `/`）。
+    /// 当前目录下**被 git 忽略**的条目名（目录不带结尾 `/`）。
     ///
     /// 文件浏览要用它把 `.idea`、`dist`、`node_modules` 这类东西藏掉。
     /// 走 `git ls-files` 而不是自己解析 `.gitignore`：嵌套规则、全局 excludes、
     /// `.git/info/exclude` 全都交给 git，口径与 `git status` 一致。
     /// 不在仓库里时返回空表 —— 此时不隐藏任何东西，而不是报错。
+    ///
+    /// **返回的是完整相对路径，不能只取第一段**：`--directory` 只会把「整个被忽略
+    /// 的目录」折成一条（`dist/`），但被忽略的**文件**仍然是完整路径
+    /// （`workspaces/.DS_Store`）。只取第一段会把 `workspaces` 当成被忽略的目录，
+    /// 于是文件浏览里整棵文档树都消失了（实测反馈：x-doc-hub 里看不到 workspaces）。
     pub fn ignored_entry_names(&self) -> Vec<String> {
         self.out(&["ls-files", "-o", "-i", "--exclude-standard", "--directory"])
             .map(|text| {
                 text.lines()
-                    .filter_map(|line| line.trim().split('/').next())
+                    .map(|line| line.trim().trim_end_matches('/'))
                     .filter(|name| !name.is_empty())
                     .map(str::to_string)
                     .collect()
@@ -692,6 +697,19 @@ impl Git {
     /// 两者对调用方的决策一致（都按"本地副本已作废"处理）。
     pub fn is_ancestor(&self, a: &str, b: &str) -> bool {
         self.ok(&["merge-base", "--is-ancestor", a, b])
+    }
+
+    /// 某个 ref 的**上一个**位置（来自 reflog，`<ref>@{1}`）。没有历史时 `None`。
+    ///
+    /// fetch 会给 `refs/remotes/*` 记 reflog。比较「上一次的远程位置」是不是
+    /// 新位置的祖先，就能分清远程是**前进**了还是被 **force push 重建**了 ——
+    /// 两者在 `ahead/behind` 上都表现为"分叉"，但对本地成果的处理方式相反：
+    /// 前进时本地成果还有效（不能动），重建时本地副本基于作废历史（必须重置）。
+    pub fn previous_ref(&self, name: &str) -> Option<String> {
+        self.out(&["rev-parse", "--verify", "--quiet", &format!("{name}@{{1}}")])
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
     }
 
     /// **只允许快进**地合入 `target`，绝不产生合并提交。

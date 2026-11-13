@@ -334,9 +334,20 @@ export const browseChanges = (dir: string, repo: string, base?: string | null) =
 /** 读工作目录里某个文件的内容。 */
 export const browseRead = (dir: string, path: string) =>
   plain(invoke<string>("browse_read", { dir, path }));
-/** 某文件相对主干的 diff（纯文本，前端自己着色）。 */
-export const browseDiff = (dir: string, repo: string, path: string, base?: string | null) =>
-  plain(invoke<FileDiff>("browse_diff", { dir, repo, path, base: base ?? null }));
+/** 把工作目录里的本地图片读成 data URL（Markdown 预览用）。 */
+export const browseReadImage = (dir: string, path: string) =>
+  plain(invoke<string>("browse_read_image", { dir, path }));
+
+/** 某文件相对主干的 diff（纯文本，前端自己着色）。
+ *  `full` = 带完整上下文（默认只给改动附近 3 行）。 */
+export const browseDiff = (
+  dir: string,
+  repo: string,
+  path: string,
+  base?: string | null,
+  full = false,
+) =>
+  plain(invoke<FileDiff>("browse_diff", { dir, repo, path, base: base ?? null, full }));
 
 /** 本地相对某基准的 `(领先, 落后)` 提交数 —— 让差异的方向看得见。 */
 export const browseAheadBehind = (dir: string, repo: string, base: string | null) =>
@@ -348,9 +359,9 @@ export const browseCommits = (dir: string, limit = 20) =>
 /** 某个提交改了哪些文件。 */
 export const browseCommitFiles = (dir: string, sha: string) =>
   plain(invoke<FileChange[]>("browse_commit_files", { dir, sha }));
-/** 某文件在某提交里的改动 + 该提交时的内容。 */
-export const browseCommitDiff = (dir: string, sha: string, path: string) =>
-  plain(invoke<FileDiff>("browse_commit_diff", { dir, sha, path }));
+/** 某文件在某提交里的改动 + 该提交时的内容。`full` 同上。 */
+export const browseCommitDiff = (dir: string, sha: string, path: string, full = false) =>
+  plain(invoke<FileDiff>("browse_commit_diff", { dir, sha, path, full }));
 
 // ══ 发布地址 ═══════════════════════════════════════════════════════════
 

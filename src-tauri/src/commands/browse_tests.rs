@@ -16,8 +16,8 @@ use tempfile::TempDir;
 use gws_core::hub::{Hub, InitOptions};
 
 use crate::commands::danger::{
-    browse_changes_in, browse_commit_files_in, browse_commits_in, browse_diff_in, browse_read_in,
-    resolved_inside,
+    browse_changes_in, browse_commit_files_in, browse_commits_in, browse_diff_in,
+    browse_read_image_in, browse_read_in, resolved_inside,
 };
 
 fn git(cwd: &Path, args: &[&str]) -> String {
@@ -186,13 +186,14 @@ fn uncommitted_changes_show_up_against_the_trunk() {
     );
 
     // 单文件 diff 也要给出内容，而不是空白
-    let d = browse_diff_in(&hub, &dir_str(&repo), "demo", "README.md", None).unwrap();
+    let d = browse_diff_in(&hub, &dir_str(&repo), "demo", "README.md", None, false).unwrap();
     assert!(
         d.diff.contains("本地改的"),
         "diff 里要有本地改的那行：{}",
         d.diff
     );
-    let new_file = browse_diff_in(&hub, &dir_str(&repo), "demo", "brand-new.txt", None).unwrap();
+    let new_file =
+        browse_diff_in(&hub, &dir_str(&repo), "demo", "brand-new.txt", None, false).unwrap();
     assert!(
         new_file.diff.contains("+新写的"),
         "没跟踪的新文件要合成一份「整文件新增」的 diff：{}",
@@ -241,6 +242,7 @@ fn head_is_a_valid_base_even_when_the_branch_was_never_pushed() {
         "demo",
         "README.md",
         Some("HEAD".into()),
+        false,
     )
     .expect("单文件 diff 也要能跑通");
     assert!(
@@ -248,6 +250,72 @@ fn head_is_a_valid_base_even_when_the_branch_was_never_pushed() {
         "diff 里要有本地改的那行：{}",
         d.diff
     );
+}
+
+/// 「完整内容」开关：默认只给 3 行上下文，打开后整份文件都带进 diff。
+#[test]
+fn full_context_includes_every_unchanged_line() {
+    let (_t, hub, repo) = fixture();
+    let body: String = (1..=30).map(|i| format!("line-{i}\n")).collect();
+    std::fs::write(repo.join("README.md"), &body).unwrap();
+    git(&repo, &["add", "README.md"]);
+    git(
+        &repo,
+        &[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            "long file",
+        ],
+    );
+    std::fs::write(
+        repo.join("README.md"),
+        body.replacen("line-1", "LINE-ONE", 1),
+    )
+    .unwrap();
+
+    let dir = dir_str(&repo);
+    let short =
+        browse_diff_in(&hub, &dir, "demo", "README.md", Some("HEAD".into()), false).unwrap();
+    assert!(short.diff.contains("LINE-ONE"), "{}", short.diff);
+    assert!(
+        !short.diff.contains("line-30"),
+        "默认只带改动附近三行：{}",
+        short.diff
+    );
+
+    let full = browse_diff_in(&hub, &dir, "demo", "README.md", Some("HEAD".into()), true).unwrap();
+    assert!(
+        full.diff.contains("line-30"),
+        "完整模式要包含整份文件：{}",
+        full.diff
+    );
+}
+
+/// Markdown 预览里的本地图片：编码成 data URL，扩展名不对 / 路径穿越要拒绝。
+#[test]
+fn images_are_read_as_data_urls() {
+    use base64::Engine as _;
+
+    let (_t, hub, repo) = fixture();
+    let dir = dir_str(&repo);
+    let bytes = [0x89u8, b'P', b'N', b'G', 1, 2, 3];
+    std::fs::write(repo.join("shot.png"), bytes).unwrap();
+
+    let url = browse_read_image_in(&hub, &dir, "shot.png").expect("读图片");
+    let want = base64::engine::general_purpose::STANDARD.encode(bytes);
+    assert_eq!(url, format!("data:image/png;base64,{want}"));
+
+    std::fs::write(repo.join("a.txt"), b"not an image").unwrap();
+    let err = browse_read_image_in(&hub, &dir, "a.txt").expect_err("文本不是图片");
+    assert!(err.message.contains("不支持"), "{}", err.message);
+
+    let err = browse_read_image_in(&hub, &dir, "../../../etc/hosts").expect_err("穿越要拒绝");
+    assert!(err.message.contains("越界"), "{}", err.message);
 }
 
 /// 基准 ref 不存在 → 给一句能看懂的话，**不是** git 的用法说明。
@@ -287,6 +355,7 @@ fn per_file_diff_works() {
         "demo",
         "dev.txt",
         Some("origin/dev".into()),
+        false,
     )
         .expect("单文件 diff 要能跑通");
     assert!(

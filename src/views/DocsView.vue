@@ -217,6 +217,12 @@ function browseSelected() {
   };
 }
 
+/** 从左侧列表直接打开某一期的文档浏览器（先解析出实际那一份目录）。 */
+async function browsePeriod(family: string, p: PeriodWithState) {
+  await pick(family, p);
+  browseSelected();
+}
+
 function statusType(merged: boolean): "default" | "success" {
   return merged ? "default" : "success";
 }
@@ -274,7 +280,9 @@ function statusType(merged: boolean): "default" | "success" {
           </button>
 
           <div v-if="expanded.has(f.name)" class="periods">
-            <button
+            <!-- 整行用 div 而不是 button：行尾要再放一个「浏览」按钮，
+                 按钮套按钮是非法结构（点击也会互相打架） -->
+            <div
               v-for="p in f.periods"
               :key="p.branch"
               class="period"
@@ -293,7 +301,18 @@ function statusType(merged: boolean): "default" | "success" {
               <span class="name">{{ p.name || p.branch }}</span>
               <span class="date">{{ p.date }}</span>
               <span class="mono branch muted">{{ p.branch }}</span>
-            </button>
+              <!-- 不用先点开右边再点「浏览文件」：这一排就是期次列表，
+                   看到哪个想翻，直接在这里开（实测反馈） -->
+              <NButton
+                size="tiny"
+                quaternary
+                class="browse-btn"
+                title="浏览这一期的文档"
+                @click.stop="browsePeriod(f.name, p)"
+              >
+                浏览
+              </NButton>
+            </div>
           </div>
         </div>
 
@@ -323,14 +342,14 @@ function statusType(merged: boolean): "default" | "success" {
               <NButton size="tiny" @click="openInFinder(periodDir(selected.family, selected.period))">
                 打开目录
               </NButton>
-              <EditorButton size="tiny" :path="periodDir(selected.family, selected.period)" />
-              <NButton size="tiny" @click="browseSelected">浏览文件</NButton>
               <NButton
                 size="tiny"
                 @click="copy(periodDir(selected.family, selected.period), '目录')"
               >
                 复制目录
               </NButton>
+              <EditorButton size="tiny" :path="periodDir(selected.family, selected.period)" />
+              <NButton size="tiny" type="primary" @click="browseSelected">浏览文件</NButton>
             </div>
           </template>
 
@@ -502,6 +521,10 @@ function statusType(merged: boolean): "default" | "success" {
 }
 .period.on {
   background: rgba(37, 99, 235, 0.1);
+}
+/* 行尾「浏览」：不挤占分支名的省略空间 */
+.period .browse-btn {
+  flex: none;
 }
 /* 已归档是背景资料，视觉上退一档（但不隐藏） */
 .period.dim {

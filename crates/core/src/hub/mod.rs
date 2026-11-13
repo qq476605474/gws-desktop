@@ -53,6 +53,9 @@ pub const LEGACY_DOCS_DIR: &str = "docs";
 pub const CLAUDE_FILE: &str = "CLAUDE.md";
 pub const AGENTS_FILE: &str = "AGENTS.md";
 
+/// 人自己维护的补充说明。工具**只读不写**，内容会合并进生成的 `AGENTS.md`。
+pub const AGENTS_LOCAL_FILE: &str = "AGENTS.local.md";
+
 /// 约定说明文件的**两个名字**。
 ///
 /// `AGENTS.md` 是**全文**（Codex / Cursor 等一批工具都读它，业界正在往它收敛）；
@@ -82,10 +85,36 @@ fn write_claude_pointer(path: &Path, old_full_text: &str) -> Result<()> {
     std::fs::write(path, pointer).map_err(|e| Error::io(path.to_path_buf(), e))
 }
 
+/// 把同目录 [`AGENTS_LOCAL_FILE`] 的内容拼到生成文本末尾。
+///
+/// 该文件由人维护，工具只读取、绝不写入。没有或为空时原样返回。
+fn with_local_notes(dir: &Path, text: &str) -> String {
+    let path = dir.join(AGENTS_LOCAL_FILE);
+    let Ok(extra) = std::fs::read_to_string(&path) else {
+        return text.to_string();
+    };
+    let extra = extra.trim();
+    if extra.is_empty() {
+        return text.to_string();
+    }
+    format!(
+        "{text}\n\
+         ## 个人自定义说明（来自 {AGENTS_LOCAL_FILE}）\n\
+         \n\
+         > 以下内容由人自己维护，工具只读取、不覆盖。\n\
+         \n\
+         {extra}\n"
+    )
+}
+
 /// 把说明写到约定文件名下：`AGENTS.md` 全文，`CLAUDE.md` 只写指针。
+///
+/// 若同目录存在 [`AGENTS_LOCAL_FILE`]，其内容会合并进 `AGENTS.md` 末尾；
+/// 该文件本身不会被创建或改写。
 pub fn write_agent_doc(dir: &Path, text: &str) -> Result<()> {
     let agents = dir.join(AGENTS_FILE);
-    std::fs::write(&agents, text).map_err(|e| Error::io(agents, e))?;
+    let merged = with_local_notes(dir, text);
+    std::fs::write(&agents, merged).map_err(|e| Error::io(agents, e))?;
     write_claude_pointer(&dir.join(CLAUDE_FILE), text)
 }
 
@@ -97,7 +126,8 @@ pub fn write_agent_doc(dir: &Path, text: &str) -> Result<()> {
 pub fn write_agent_doc_missing_only(dir: &Path, text: &str) -> Result<()> {
     let agents = dir.join(AGENTS_FILE);
     if !agents.exists() {
-        std::fs::write(&agents, text).map_err(|e| Error::io(agents, e))?;
+        let merged = with_local_notes(dir, text);
+        std::fs::write(&agents, merged).map_err(|e| Error::io(agents, e))?;
     }
     write_claude_pointer(&dir.join(CLAUDE_FILE), text)
 }
@@ -535,6 +565,23 @@ pub fn hub_claude_md(hub: &Hub) -> String {
             常用类型：需求文档、设计方案、技术方案、说明文档、使用说明、代码导读、\
             提测单、测试用例、sql、发布步骤、实施步骤。用 `gws doc new <类型>` 生成模板。\n\
          \n\
+         ### Workspace 内部文档分类（所有新需求通用）\n\
+         \n\
+         需求 workspace 下的文档必须按用途归入子目录，不得直接堆在期次根目录：\n\
+         \n\
+         | 目录 | 放什么 | 保留 |\n\
+         |---|---|---|\n\
+         | `需求文档/` | 原型、产品需求、需求补充、原型补充等开发前定稿内容 | 长期保留 |\n\
+         | `开发文档/` | 设计方案、技术方案、实施计划、提测单、自审 / 评审记录 | 长期保留 |\n\
+         | `自测文档/` | 开发自测过程与结果，原则上合并为一份 | 提测后可删 |\n\
+         | `测试文档/` | 测试工程师测试过程与结果 | 长期保留 |\n\
+         | `运维文档/` | 发布步骤、DDL / 清理 SQL 等运维脚本 | 长期保留 |\n\
+         | `总体设计/` | 代码导读、功能全景等长期维护的全局文档 | 长期保留 |\n\
+         | `其他文件/` | 有保存价值但不好归类的文档（不是临时文件） | 长期保留 |\n\
+         | `临时文件/` | 无长期保留价值的过程文件 | 提测 / 上线后删除 |\n\
+         \n\
+         `AGENTS.md`、`CLAUDE.md`、`meta.json` 保留在期次根目录。\n\
+         \n\
          ## 改代码的规则\n\
          \n\
          1. **只改 `ws/<当前分支>/` 下的代码。** `repos/` 与 `envs/` 默认都是镜像，\
@@ -573,7 +620,12 @@ pub fn hub_claude_md(hub: &Hub) -> String {
          - 文档同理：`gws doc status` 看变更 → 人确认 → `gws doc sync`。\n\
          \n\
          > **例外只有一处**：上面「合错代码的处理」那种情形，允许 AI 在**环境分支**上\
-         提交修正。其余一切提交仍然要人来做。\n",
+         提交修正。其余一切提交仍然要人来做。\n\
+         \n\
+         ## 个人自定义说明（可选）\n\
+         \n\
+         想加自己的规则，写在同目录的 `AGENTS.local.md` 里。这个文件由人维护，\
+         工具**只读取、不覆盖**；每次刷新本文件时会把它的内容合并到最下方。\n",
         envs = envs,
     )
 }
@@ -796,6 +848,53 @@ mod tests {
             !claude.contains("只改 ws/<当前分支>/"),
             "指针里不该复制全文：{claude}"
         );
+    }
+
+    #[test]
+    fn local_rules_are_merged_but_never_overwritten() {
+        let dir = TempDir::new().unwrap();
+        let local = dir.path().join(AGENTS_LOCAL_FILE);
+        let mine = "# 我的规则\n\n提交前先跑测试。\n";
+        std::fs::write(&local, mine).unwrap();
+
+        write_agent_doc(dir.path(), "# 工具全文\n").unwrap();
+
+        let agents = std::fs::read_to_string(dir.path().join(AGENTS_FILE)).unwrap();
+        assert!(agents.contains("# 工具全文"), "{agents}");
+        assert!(
+            agents.contains("## 个人自定义说明（来自 AGENTS.local.md）"),
+            "{agents}"
+        );
+        assert!(agents.contains("提交前先跑测试。"), "{agents}");
+        // 工具只读，不改人写的文件
+        assert_eq!(std::fs::read_to_string(&local).unwrap(), mine);
+    }
+
+    #[test]
+    fn empty_local_rules_add_nothing() {
+        let dir = TempDir::new().unwrap();
+        std::fs::write(dir.path().join(AGENTS_LOCAL_FILE), "  \n\n").unwrap();
+        write_agent_doc(dir.path(), "# 工具全文\n").unwrap();
+        let agents = std::fs::read_to_string(dir.path().join(AGENTS_FILE)).unwrap();
+        assert!(!agents.contains("## 个人自定义说明（来自"), "{agents}");
+    }
+
+    #[test]
+    fn hub_refresh_picks_up_local_rules() {
+        let dir = TempDir::new().unwrap();
+        let hub = Hub::init(&dir.path().join("h"), InitOptions::default()).unwrap();
+        std::fs::write(
+            hub.root().join(AGENTS_LOCAL_FILE),
+            "只改我关心的两个仓库。\n",
+        )
+        .unwrap();
+
+        hub.write_claude_md().unwrap();
+
+        let agents = std::fs::read_to_string(hub.root().join(AGENTS_FILE)).unwrap();
+        assert!(agents.contains("只改我关心的两个仓库。"), "{agents}");
+        // 提示也写进正文，方便人发现这个入口
+        assert!(agents.contains("`AGENTS.local.md`"), "{agents}");
     }
 
     #[test]

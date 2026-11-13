@@ -18,6 +18,8 @@ function outcome(over: Partial<MergeOutcome> = {}): MergeOutcome {
     skipped: [],
     conflicts: [],
     conflict_dirs: {},
+    conflict_files: {},
+    resumed_conflicts: [],
     pushed: [],
     push_failed: [],
     did_push: false,
@@ -56,5 +58,29 @@ describe("mergeLines · 推送目标", () => {
   it("拿不到分支信息时退回环境标识（不显示成空白）", () => {
     const t = text(outcome({ did_push: true, pushed: ["x"], branches: {} }));
     expect(t).toContain("origin/pre");
+  });
+});
+
+describe("mergeLines · 冲突现场", () => {
+  it("上次没解完的冲突要标明「现场保留」，并列出文件", () => {
+    const t = text(
+      outcome({
+        conflicts: ["a"],
+        resumed_conflicts: ["a"],
+        conflict_files: { a: ["src/x.ts"] },
+        conflict_dirs: { a: "/hub/envs/pre/a" },
+      }),
+    );
+    expect(t).toContain("上次没解完");
+    expect(t).toContain("src/x.ts");
+    expect(t).toContain("/hub/envs/pre/a");
+  });
+
+  it("新产生的冲突同样列出文件，但不冒充「上次没解完」", () => {
+    const t = text(
+      outcome({ conflicts: ["b"], conflict_files: { b: ["pom.xml"] } }),
+    );
+    expect(t).toContain("pom.xml");
+    expect(t).not.toContain("上次没解完");
   });
 });

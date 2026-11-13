@@ -549,7 +549,7 @@ fn docs_are_readable_from_the_main_clone_without_switching_branches() {
         dh.root(),
         &[
             "show",
-            "feature-x:workspaces/示例需求/feature-x/技术方案.md",
+            "feature-x:workspaces/示例需求/feature-x/开发文档/技术方案.md",
         ],
     );
     assert!(show.contains("技术方案"), "{show}");
@@ -1020,20 +1020,33 @@ fn adding_or_dropping_a_module_updates_the_period_repos() {
 }
 
 #[test]
-fn the_period_docs_are_regenerated_with_the_new_title() {
+fn the_period_agent_notes_stay_generic_after_a_title_change() {
     let f = Fixture::new();
     let dh = f.dochub();
     let mut ws = f.create("feature-20261013-regen", "旧名");
     dh.attach(&mut ws, None).unwrap();
+    let period = dh.period_dir(&ws);
+
+    // 期次说明只写通用约定，名字/分类/分支都不该出现（这些随时会改）
+    let before = std::fs::read_to_string(period.join("AGENTS.md")).unwrap();
+    assert!(!before.contains("旧名"), "不该写需求名：{before}");
+    assert!(
+        !before.contains("feature-20261013-regen"),
+        "不该写分支名：{before}"
+    );
 
     ws.meta_mut().title = "改过的名字".into();
     ws.save_meta().unwrap();
     dh.sync_title(&ws).unwrap();
 
-    let period = dh.period_dir(&ws);
-    // 全文只有 AGENTS.md 一份；CLAUDE.md 只是指向它的指针
+    // 改名只改 meta.json；AGENTS.md 原样保留（用户可能在里面加过自己的约定）
     let agents = std::fs::read_to_string(period.join("AGENTS.md")).unwrap();
-    assert!(agents.contains("改过的名字"), "AGENTS.md 里应当是新名字");
+    assert_eq!(agents, before, "改名不该重写 AGENTS.md");
+    let meta = std::fs::read_to_string(period.join(META_FILE)).unwrap();
+    assert!(
+        meta.contains("改过的名字"),
+        "meta.json 里应当是新名字：{meta}"
+    );
     let claude = std::fs::read_to_string(period.join("CLAUDE.md")).unwrap();
     assert!(
         claude.contains("AGENTS.md"),

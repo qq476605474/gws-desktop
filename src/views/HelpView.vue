@@ -37,20 +37,26 @@ function go(id: string) {
 
 <template>
   <div class="page">
-    <h2 class="title">使用帮助</h2>
-    <p class="muted">
-      按日常顺序把每个入口、每个按钮说清楚；完整版见仓库里的
-      <code>docs/使用教程.md</code>。
-    </p>
+    <header class="head">
+      <h2 class="title">使用帮助</h2>
+      <p class="muted">
+        按日常顺序把每个入口、每个按钮说清楚；完整版见仓库里的
+        <code>docs/使用教程.md</code>。
+      </p>
+    </header>
 
-    <NCard size="small" class="card toc" title="目录">
-      <ol class="toc-list">
-        <li v-for="s in sections" :key="s.id">
-          <a :href="'#' + s.id" @click.prevent="go(s.id)">{{ s.title }}</a>
-        </li>
-      </ol>
-    </NCard>
+    <!-- 目录单独放在左栏并吸顶：正文很长，滚下去以后不用再滚回顶部找章节 -->
+    <aside class="toc">
+      <NCard size="small" class="toc-card" title="目录">
+        <ol class="toc-list">
+          <li v-for="s in sections" :key="s.id">
+            <a :href="'#' + s.id" @click.prevent="go(s.id)">{{ s.title }}</a>
+          </li>
+        </ol>
+      </NCard>
+    </aside>
 
+    <div class="body">
     <!-- ── 0. 这个软件是干什么的 ── -->
     <section id="help-what" class="sec">
       <NCard size="small" class="card" title="GWS 是干什么的">
@@ -170,8 +176,13 @@ function go(id: string) {
           </li>
           <li>
             详情顶部：分类标签、基线、当前版本信息，以及一排操作（检查远程、拉取、提交、推送、
-            合并到环境、发布、提 MR、同步基线……）；右侧是「导出需求配置」「打开目录」
-            「用编辑器打开」「终端」「复制目录」「刷新」。
+            合并到环境、发布、提 MR、同步基线……）；右侧按组排列：需求级
+            （派发 Paseo、需求相关文档、导出需求配置）｜目录（打开目录、复制目录、
+            用编辑器打开、终端）｜页面（刷新、删除需求）。
+          </li>
+          <li>
+            <strong>删除需求</strong>在详情页右上角（危险色，二次确认），设置页不再重复放一个。
+            有未保存的工作时会先列出风险项，确认后才强制删除。
           </li>
           <li>
             备注和自定义信息显示在表格上方 —— 飞书 / tapd 这类东西就是要常点，
@@ -183,9 +194,10 @@ function go(id: string) {
             <strong>vs主干</strong>（+N 个提交）、操作。
           </li>
           <li>
-            每个模块：浏览文件、对比代码、GitLab、终端、打开目录、复制目录、
-            用编辑器打开（按设置里配置的常用编辑器列表，编辑器已开着会切到对应窗口）；
-            文档库固定排在第一行，同样能浏览 / 对比，也能从本需求「移除」（只摘掉，不删文档）。
+            每个模块的按钮按组排：目录（打开目录、复制目录、用编辑器打开、终端）→
+            查阅（浏览文件、对比代码、GitLab）→ 移除。用编辑器打开按设置里配置的
+            常用编辑器列表，编辑器已开着会切到对应窗口；文档库固定排在第一行，同样能
+            浏览 / 对比，也能从本需求「移除」（只摘掉，不删文档）。
           </li>
         </ul>
       </NCard>
@@ -260,8 +272,14 @@ function go(id: string) {
             <strong>合并到环境并推送</strong>：同一个操作，只是那一项已经替你勾好。
           </li>
           <li>
-            上次合了一半或冲突后想重来，勾「丢弃本地未推送的合并成果，从远程重新合」。
-            冲突会列出模块和文件路径，解决后再点一次同一个按钮。
+            冲突会列出模块和具体文件路径，解决后再点一次同一个按钮就会自动收尾
+            （已解完并 git add 的会自动补提交）。<strong>冲突现场不会被自动重置</strong> ——
+            即使这期间远程环境分支又前进了，也只会提示「上次没解完，现场保留」，
+            不会让你把同一个文件再解一遍。
+          </li>
+          <li>
+            确实想放弃本地环境里的成果、按远程重来时，勾「丢弃本地未推送的合并成果，
+            从远程重新合」。远程环境分支被 force push 重建过时也用这个选项。
           </li>
           <li>
             <strong>合完不用切页面</strong>：结果里直接列出发过合并的模块目录，右边
@@ -296,10 +314,21 @@ function go(id: string) {
         <ul>
           <li>
             <strong>浏览文件</strong>：文件树 + 真实内容，跟 git 状态无关，任何时候都能用。
+            Markdown 文件默认直接渲染成预览（图片、表格、Mermaid 图都能看），
+            右上角可切回「源码」。「需求相关文档」里的「浏览文档」也会打开同一个
+            浏览窗口，所以文档可以直接在这里看，不用先下载或用外部编辑器。
+          </li>
+          <li>
+            <strong>文档内查找</strong>：打开文件后按 <code>Cmd/Ctrl+F</code>（或点右上角
+            「查找」），只查<strong>当前这份文档</strong>，跟本地编辑器一样高亮每一处、
+            回车跳到下一处（Shift+回车上一处），预览和源码都能查。
+            文件头会显示<strong>多少行、多少字</strong>（字数按非空白字符算）。
           </li>
           <li>
             <strong>对比代码</strong>：左边是改动文件（或提交历史、文件树），右边是
             diff / 内容；点文件还能看到最后改它的人、日期和提交说明。
+            diff 默认只显示改动附近几行，需要看上下文时点右上角「完整内容」，
+            会把整份文件都展开（内容多时滚动会长）。
           </li>
         </ul>
         <div class="sub">对比目标（默认「与本地」）</div>
@@ -369,9 +398,18 @@ function go(id: string) {
             <code>workspaces/&lt;需求分类&gt;/&lt;分支名&gt;/</code>。
           </li>
           <li>
+            期次里的文档按用途放进子目录：<code>需求文档/</code>、<code>开发文档/</code>、
+            <code>自测文档/</code>、<code>测试文档/</code>、<code>运维文档/</code>、
+            <code>总体设计/</code>、<code>其他文件/</code>、<code>临时文件/</code>；
+            <code>gws doc new &lt;类型&gt;</code> 会直接建到对应目录。
+            AGENTS.md 只写通用约定，不写需求名 / 分类 / 期次 / 分支名，改名或换分类都不会过期。
+          </li>
+          <li>
             新建时勾了文档库（或详情里点「挂上文档」）就会建目录，并生成
             <code>meta.json</code>、<code>AGENTS.md</code>、<code>CLAUDE.md</code>；
             CLAUDE.md 只是指向 AGENTS.md 的指针，内容以 AGENTS.md 为准。
+            想加自己的规则，写到同目录的 <code>AGENTS.local.md</code>：程序只读取、
+            不覆盖，并会把它合并进生成的 AGENTS.md。
           </li>
           <li>
             详情里的「需求相关文档」直接展开这一期；只有脚手架、没有正文时，
@@ -384,6 +422,7 @@ function go(id: string) {
           </li>
           <li>
             「文档」页按分类 / 期次浏览；空期次不列出，本地打不开的期次也不列。
+            每一期行尾有「浏览」，不用先点开右边就能直接看这一期的文档。
             首次用先「拉取文档库」，「从远程同步」拉最新。
           </li>
           <li>
@@ -406,7 +445,8 @@ function go(id: string) {
           <li>「添加仓库」把 GitLab 仓库 clone 到 hub 里；只接受本 hub 绑定的那个 GitLab 上的地址。</li>
           <li>「同步主干」把各仓库镜像更新到最新主干（fetch + reset）；镜像只读，别在里面改代码。</li>
           <li>
-            每行：主干分支、未推送状态、GitLab、打开目录、终端、自定义信息、详情、导出配置、删除；
+            每行按钮按组排：目录（打开目录、复制目录、用编辑器打开）→ 查阅（浏览文件、
+            对比代码）→ GitLab / 自定义信息 / 详情 / 导出配置 → 删除；
             仍被某个需求用着时会拒绝删除（环境里的是镜像，会跟着一起清掉）。
           </li>
           <li>
@@ -642,25 +682,45 @@ function go(id: string) {
         </div>
       </NCard>
     </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .page {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  gap: 0 28px;
   padding: 20px 24px 40px;
-  max-width: 980px;
+  max-width: 1180px;
+  align-items: start;
+}
+.head {
+  grid-column: 1 / -1;
 }
 .title {
   margin: 0 0 8px;
   font-size: 18px;
   font-weight: 600;
 }
+/* 目录吸顶：正文滚多深都能直接跳章节 */
+.toc {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+}
+.toc-card {
+  margin-top: 16px;
+}
 .toc-list {
   margin: 0;
-  padding-left: 20px;
-  columns: 2;
-  column-gap: 32px;
-  line-height: 1.9;
+  padding-left: 18px;
+  line-height: 1.8;
+  font-size: 12px;
+}
+.body {
+  min-width: 0;
 }
 .toc-list a {
   color: var(--n-text-color, inherit);
@@ -670,9 +730,14 @@ function go(id: string) {
   color: #2563eb;
   text-decoration: underline;
 }
-@media (max-width: 720px) {
-  .toc-list {
-    columns: 1;
+@media (max-width: 900px) {
+  .page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .toc {
+    position: static;
+    max-height: none;
+    overflow: visible;
   }
 }
 .sec {

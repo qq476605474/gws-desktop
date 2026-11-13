@@ -514,6 +514,70 @@ pub(crate) fn browse_read_in(hub: &gws_core::Hub, dir: &str, path: &str) -> CmdR
     std::fs::read_to_string(&real).map_err(|e| CommandError::plain(format!("读不到 {path}: {e}")))
 }
 
+/// 把工作目录里的本地图片读成 data URL（Markdown 预览用）。
+///
+/// 为什么不直接让 webview 读 `file://`：Tauri 的 asset 协议默认没开，
+/// 开它要把整个 home 目录加进作用域，范围给得太大。这里复用 `browse_read`
+/// 的目录边界检查，只读当前浏览目录里的文件。
+#[tauri::command(async)]
+pub async fn browse_read_image(
+    dir: String,
+    path: String,
+    app: State<'_, App>,
+) -> CmdResult<String> {
+    let hub = app.hub()?;
+    bg(move || browse_read_image_in(&hub, &dir, &path)).await
+}
+
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+
+pub(crate) fn browse_read_image_in(
+    hub: &gws_core::Hub,
+    dir: &str,
+    path: &str,
+) -> CmdResult<String> {
+    use base64::Engine as _;
+
+    let dir = checked_dir(hub, dir)?;
+    let real = join_inside(&dir, path)?;
+    let meta =
+        std::fs::metadata(&real).map_err(|e| CommandError::plain(format!("读不到 {path}: {e}")))?;
+    if meta.is_dir() {
+        return Err(CommandError::plain(format!("{path} 是个目录，不是图片")));
+    }
+    let len = meta.len();
+    if len > MAX_IMAGE_BYTES {
+        return Err(CommandError::plain(format!(
+            "图片过大（{len} 字节，上限 20MB）"
+        )));
+    }
+    let mime = match real
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "svg" => "image/svg+xml",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        other => {
+            return Err(CommandError::plain(format!(
+                "不支持的图片类型 .{other}: {path}"
+            )))
+        }
+    };
+    let bytes =
+        std::fs::read(&real).map_err(|e| CommandError::plain(format!("读不到 {path}: {e}")))?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    Ok(format!("data:{mime};base64,{b64}"))
+}
+
 /// 某文件相对主干的 diff。
 ///
 /// 带 `--no-ext-diff --no-color`：**必须是纯文本**，由前端自己着色（按 `+`/`-`/`@@`
@@ -525,10 +589,11 @@ pub async fn browse_diff(
     repo: String,
     path: String,
     base: Option<String>,
+    full: bool,
     app: State<'_, App>,
 ) -> CmdResult<FileDiff> {
     let hub = app.hub()?;
-    bg(move || browse_diff_in(&hub, &dir, &repo, &path, base)).await
+    bg(move || browse_diff_in(&hub, &dir, &repo, &path, base, full)).await
 }
 
 /// 命令体（同上，便于测试）。
@@ -538,6 +603,7 @@ pub(crate) fn browse_diff_in(
     repo: &str,
     path: &str,
     base: Option<String>,
+    full: bool,
 ) -> CmdResult<FileDiff> {
     {
         let dir = checked_dir(hub, dir)?;
@@ -554,11 +620,18 @@ pub(crate) fn browse_diff_in(
             "--",
             &path,
         ];
+        // 默认只给改动前后 3 行；「完整内容」开关把整个文件都带进来，
+        // 代价是 diff 很长，所以由人自己选。
+        let context = if full {
+            "--unified=999999"
+        } else {
+            "--unified=3"
+        };
         let diff_args = vec![
             "diff",
             "--no-color",
             "--no-ext-diff",
-            "--unified=3",
+            context,
             &base,
             "--",
             &path,
@@ -569,8 +642,8 @@ pub(crate) fn browse_diff_in(
         // **必须同时满足「磁盘上有这个文件」**：只判「没被 git 跟踪」的话，
         // 「基准里有、本地没有」的文件（本地视角是删除）也会走进这条分支，
         // 结果合成不出来、diff 变空 —— 那条路径本来 `git diff` 是能正常给出内容的。
-        let full = dir.join(path);
-        let untracked = full.is_file()
+        let full_path = dir.join(path);
+        let untracked = full_path.is_file()
             && !git.ok(&["ls-files", "--error-unmatch", "--", path])
             // 防目录穿越：读之前确认它真的在这个目录里（与 `browse_read` 同一套）
             && is_inside(&dir, path);
@@ -587,7 +660,7 @@ pub(crate) fn browse_diff_in(
             .unwrap_or_default();
         let mut parts = who.splitn(3, '|');
         let (stat, diff) = if untracked {
-            synthetic_new_file_diff(&full, path)
+            synthetic_new_file_diff(&full_path, path)
         } else {
             (
                 git.out(&stat_args).unwrap_or_default(),
@@ -712,6 +785,7 @@ pub async fn browse_commit_diff(
     dir: String,
     sha: String,
     path: String,
+    full: bool,
     app: State<'_, App>,
 ) -> CmdResult<FileDiff> {
     let hub = app.hub()?;
@@ -737,7 +811,19 @@ pub async fn browse_commit_diff(
                 ])
                 .unwrap_or_default(),
             diff: git
-                .out(&["show", "--no-color", "--no-ext-diff", &sha, "--", &path])
+                .out(&[
+                    "show",
+                    "--no-color",
+                    "--no-ext-diff",
+                    if full {
+                        "--unified=999999"
+                    } else {
+                        "--unified=3"
+                    },
+                    &sha,
+                    "--",
+                    &path,
+                ])
                 .unwrap_or_default(),
             author: String::new(),
             date: String::new(),

@@ -317,6 +317,10 @@ export interface MergeOutcome {
   skipped: [string, string][];
   conflicts: string[];
   conflict_dirs: Record<string, string>;
+  /** 模块 → 还没解决的文件（相对仓库根）。 */
+  conflict_files: Record<string, string[]>;
+  /** 这轮开始前就已经是冲突现场的模块（现场保留、没被重置）。 */
+  resumed_conflicts: string[];
   pushed: string[];
   push_failed: [string, string][];
   did_push: boolean;

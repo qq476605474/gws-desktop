@@ -1104,6 +1104,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn list_entries_keeps_dirs_that_only_contain_ignored_files() {
+        // 实测反馈：文档库的 workspaces 目录不见了。真因是忽略清单只取
+        // 路径第一段 —— `workspaces/.DS_Store` 被当成了「workspaces 被忽略」。
+        let tmp = tempfile::TempDir::new().unwrap();
+        let root = tmp.path();
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(root)
+            .status()
+            .unwrap();
+        std::fs::write(root.join(".gitignore"), ".DS_Store\nnode_modules/\n").unwrap();
+        std::fs::create_dir_all(root.join("workspaces/族/分支")).unwrap();
+        std::fs::write(root.join("workspaces/.DS_Store"), "").unwrap();
+        std::fs::write(root.join("workspaces/族/分支/文档.md"), "x").unwrap();
+        std::fs::create_dir_all(root.join("node_modules/pkg")).unwrap();
+
+        let entries = list_entries(root.to_string_lossy().to_string()).unwrap();
+
+        assert!(
+            entries.iter().any(|e| e.name == "workspaces" && e.is_dir),
+            "只在里面有 .DS_Store 的目录不能被整棵藏掉: {entries:?}"
+        );
+        assert!(!entries.iter().any(|e| e.name == ".DS_Store"));
+        assert!(
+            !entries.iter().any(|e| e.name == "node_modules"),
+            "本身被忽略的目录仍要藏掉"
+        );
+    }
+
+    #[test]
     fn win_path_normalisation() {
         assert_eq!(normalize_win_path(r"C:\a\/b"), r"C:\a\b");
         assert_eq!(normalize_win_path("C:/a/b"), r"C:\a\b");

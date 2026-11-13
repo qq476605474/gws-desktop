@@ -68,7 +68,7 @@ export function pullLines(o: PullOutcome): string[] {
 
 export function mergeLines(o: MergeOutcome): string[] {
   const out: string[] = [];
-  for (const m of o.stale) out.push(`⚠ ${m}: 远程环境分支曾被重建，本地副本已重置并重新合并`);
+  for (const m of o.stale) out.push(`⚠ ${m}: 环境分支在远程被重建过，本地副本已按远程重置后重新合并`);
   for (const [m, n] of o.pending) out.push(`~ ${m}  (${n} 个提交待推)`);
   for (const m of o.clean) out.push(`✓ ${m}`);
   for (const [m, why] of o.skipped) out.push(`- ${m}  ${why}`);
@@ -78,13 +78,17 @@ export function mergeLines(o: MergeOutcome): string[] {
     out.push("");
     out.push(`✗ 冲突待处理 (${o.conflicts.length})：`);
     for (const m of o.conflicts) {
-      out.push(`     ${m}`);
+      const resumed = o.resumed_conflicts?.includes(m);
+      out.push(`     ${m}${resumed ? "  （上次没解完，冲突现场原样保留）" : ""}`);
+      for (const f of (o.conflict_files?.[m] ?? []).slice(0, 8)) out.push(`       · ${f}`);
+      const files = o.conflict_files?.[m] ?? [];
+      if (files.length > 8) out.push(`       · …共 ${files.length} 个文件`);
       const dir = o.conflict_dirs[m];
       if (dir) out.push(`      ${dir}`);
     }
     out.push("");
     out.push(
-      `  下面可直接用编辑器打开对应目录解决冲突，然后重新点一次「合并到 ${o.env}」收尾`,
+      `  改完这些文件并 git add（无需 commit），再点一次「合并到 ${o.env}」就会自动收尾`,
     );
     return out;
   }

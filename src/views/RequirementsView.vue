@@ -145,6 +145,9 @@ async function cleanLeftovers() {
           <NButton size="tiny" secondary @click="openInFinder(app.hub!.root + '/ws/' + w.branch)">
             打开目录
           </NButton>
+          <NButton size="tiny" secondary @click="copy(app.hub!.root + '/ws/' + w.branch, '目录')">
+            复制目录
+          </NButton>
           <EditorButton size="tiny" :path="app.hub!.root + '/ws/' + w.branch" />
           <NButton
             size="tiny"
@@ -152,9 +155,6 @@ async function cleanLeftovers() {
             @click="openInTerminal(app.hub!.root + '/ws/' + w.branch, app.terminal)"
           >
             终端
-          </NButton>
-          <NButton size="tiny" secondary @click="copy(app.hub!.root + '/ws/' + w.branch, '目录')">
-            复制目录
           </NButton>
           </div>
         </div>

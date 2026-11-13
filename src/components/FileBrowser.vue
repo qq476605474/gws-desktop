@@ -8,11 +8,18 @@
 //!
 //! 用途：review 自己或其他人改了什么、定位某段逻辑在哪个文件里。
 
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { NAlert, NButton, NEmpty, NInput, NSelect, NSpin } from "naive-ui";
 
 import * as api from "../bridge";
 import { useCopy } from "../lib/copy";
+import {
+  decodeRef,
+  isExternalLink,
+  isMarkdownPath,
+  renderMarkdown,
+  resolveAssetPath,
+} from "../lib/markdown";
 import { useAppStore } from "../stores/app";
 import {
   compareBase,
@@ -173,6 +180,160 @@ const fileErr = ref("");
 const q = ref("");
 /** 右侧看哪一页：diff / 内容。 */
 const pane = ref<"diff" | "content">("diff");
+/** diff 是否带完整上下文（默认 false：只显示改动附近 3 行）。 */
+const showFullDiff = ref(false);
+
+// ── 文档内查找（Cmd/Ctrl+F，跟本地编辑器一样） ──
+/** 查找条是否打开。 */
+const findOpen = ref(false);
+const findQ = ref("");
+/** 第几个匹配（0 起）与总数。 */
+const findCur = ref(0);
+const findTotal = ref(0);
+const findInput = ref<InstanceType<typeof NInput> | null>(null);
+const codeBox = ref<HTMLElement | null>(null);
+const diffBox = ref<HTMLElement | null>(null);
+let findRanges: Range[] = [];
+/** 结果太多时不再新增：高亮几千处既卡又看不清。 */
+const FIND_LIMIT = 2000;
+const HL_ALL = "gws-find";
+const HL_CUR = "gws-find-current";
+
+/** 当前正在看的那块内容：Markdown 预览是整块正文，源码/差异只看正文文本。 */
+function findContainer(): HTMLElement | null {
+  if (isMd.value && mdView.value === "preview") return mdBox.value;
+  return pane.value === "diff" && mode.value !== "tree" ? diffBox.value : codeBox.value;
+}
+
+/**
+ * 收集当前可见内容里的每一处匹配。
+ *
+ * 源码/差异只走 `.txt`（排除行号），Markdown 预览遍历正文文本节点；
+ * 图表 SVG 里的文字跳过 —— 那不是文档正文。
+ */
+function collectFindRanges(): Range[] {
+  const box = findContainer();
+  const q = findQ.value.trim().toLowerCase();
+  if (!box || !q) return [];
+  const roots: Node[] = [];
+  if (isMd.value && mdView.value === "preview") {
+    roots.push(box);
+  } else {
+    box.querySelectorAll(".txt").forEach((el) => roots.push(el));
+  }
+  const ranges: Range[] = [];
+  for (const root of roots) {
+    if (ranges.length >= FIND_LIMIT) break;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) =>
+        n.parentElement?.closest("svg")
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT,
+    });
+    let node: Node | null;
+    while ((node = walker.nextNode()) && ranges.length < FIND_LIMIT) {
+      const text = node.nodeValue ?? "";
+      const lower = text.toLowerCase();
+      let from = 0;
+      for (;;) {
+        const at = lower.indexOf(q, from);
+        if (at < 0 || ranges.length >= FIND_LIMIT) break;
+        const r = document.createRange();
+        r.setStart(node, at);
+        r.setEnd(node, at + q.length);
+        ranges.push(r);
+        from = at + q.length;
+      }
+    }
+  }
+  return ranges;
+}
+
+function clearFindHighlights() {
+  highlightApi()?.delete(HL_ALL);
+  highlightApi()?.delete(HL_CUR);
+}
+
+/** CSS Custom Highlight API（老 WebView 没有时只计数、不画高亮，仍能跳转）。 */
+function highlightApi(): HighlightRegistry | null {
+  return typeof CSS !== "undefined" && "highlights" in CSS ? CSS.highlights : null;
+}
+
+function scrollToFind() {
+  const range = findRanges[findCur.value];
+  range?.startContainer.parentElement?.scrollIntoView({ block: "center" });
+}
+
+/** 重新计算匹配并刷新高亮；`reset` = 输入变了，回到第一处。 */
+function refreshFind(reset = false) {
+  clearFindHighlights();
+  findRanges = collectFindRanges();
+  findTotal.value = findRanges.length;
+  if (reset) findCur.value = 0;
+  if (findCur.value >= findTotal.value) {
+    findCur.value = findTotal.value ? findTotal.value - 1 : 0;
+  }
+  if (!findRanges.length) return;
+  const hl = highlightApi();
+  if (hl) {
+    hl.set(HL_ALL, new Highlight(...findRanges));
+    hl.set(HL_CUR, new Highlight(findRanges[findCur.value]));
+  }
+  scrollToFind();
+}
+
+function stepFind(delta: number) {
+  if (!findTotal.value) return;
+  findCur.value = (findCur.value + delta + findTotal.value) % findTotal.value;
+  refreshFind(false);
+}
+
+function onFindKey(e: KeyboardEvent) {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    stepFind(e.shiftKey ? -1 : 1);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeFind();
+  }
+}
+
+async function openFind() {
+  if (!picked.value) return;
+  findOpen.value = true;
+  await nextTick();
+  findInput.value?.focus();
+  if (findQ.value.trim()) refreshFind(true);
+}
+
+function closeFind() {
+  findOpen.value = false;
+  clearFindHighlights();
+  findRanges = [];
+  findTotal.value = 0;
+  findCur.value = 0;
+}
+
+/** Cmd/Ctrl+F：拦截 webview 自带的页面查找，改成查当前文档。 */
+function onFindHotkey(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "f") {
+    if (!picked.value) return;
+    e.preventDefault();
+    void openFind();
+  }
+}
+
+/** Markdown 文件用预览还是看源码；打开 md 时默认预览。 */
+const mdView = ref<"preview" | "source">("source");
+const isMd = computed(() => isMarkdownPath(picked.value));
+const mdRender = computed(() =>
+  isMd.value ? renderMarkdown(content.value) : { html: "", mermaid: [] },
+);
+const mdBox = ref<HTMLElement | null>(null);
+/** 每次换文件 / 切视图就换令牌，防止旧的异步渲染回填到新页面。 */
+let mdToken = 0;
+type Mermaid = (typeof import("mermaid"))["default"];
+let mermaidLib: Promise<Mermaid> | null = null;
 
 /** 单模块模式：整个组件只服务一个目录。 */
 function singleSource(): Source[] {
@@ -409,11 +570,12 @@ async function openCommitFile(path: string) {
   const c = selCommit.value;
   if (!src || !c) return;
   picked.value = path;
+  mdView.value = isMarkdownPath(path) ? "preview" : "source";
   selSource.value = src;
   loadingFile.value = true;
   fileErr.value = "";
   try {
-    const d = await api.browseCommitDiff(src.dir, c.sha, path);
+    const d = await api.browseCommitDiff(src.dir, c.sha, path, showFullDiff.value);
     content.value = d.content;
     diff.value = d.diff;
     diffStat.value = d.stat;
@@ -523,6 +685,15 @@ function statusOf(st?: string): { text: string; cls: string } {
 
 const contentLines = computed(() => content.value.split("\n"));
 
+/** 行数与字数。字数按**非空白字符**算，中文/英文都适用（不区分词）。 */
+const contentStats = computed(() => {
+  if (!content.value) return null;
+  return {
+    lines: contentLines.value.length,
+    chars: content.value.replace(/\s/g, "").length,
+  };
+});
+
 /** 「张三 · 2026-10-12 · 修复登录」——最后一次改动这个文件的人。 */
 /** 右侧那页的标题：说清到底在跟谁比。 */
 const diffLabel = computed(() => {
@@ -625,6 +796,7 @@ const diffLines = computed(() => {
 
 async function openFile(path: string, src?: Source) {
   picked.value = path;
+  mdView.value = isMarkdownPath(path) ? "preview" : "source";
   selSource.value = src ?? sources.value[0] ?? null;
   loadingFile.value = true;
   fileErr.value = "";
@@ -645,7 +817,13 @@ async function openFile(path: string, src?: Source) {
       diffStat.value = "";
       fileDiff.value = null;
     } else {
-      const d = await api.browseDiff(use.dir, use.repo, path, baseOf(use) ?? null);
+      const d = await api.browseDiff(
+        use.dir,
+        use.repo,
+        path,
+        baseOf(use) ?? null,
+        showFullDiff.value,
+      );
       diff.value = d.diff;
       diffStat.value = d.stat;
       fileDiff.value = d;
@@ -657,7 +835,13 @@ async function openFile(path: string, src?: Source) {
     content.value = "";
     if (mode.value !== "tree") {
       try {
-        const d = await api.browseDiff(use.dir, use.repo, path, baseOf(use) ?? null);
+        const d = await api.browseDiff(
+        use.dir,
+        use.repo,
+        path,
+        baseOf(use) ?? null,
+        showFullDiff.value,
+      );
         diff.value = d.diff;
         diffStat.value = d.stat;
         fileDiff.value = d;
@@ -668,6 +852,96 @@ async function openFile(path: string, src?: Source) {
   } finally {
     loadingFile.value = false;
   }
+}
+
+function loadMermaid(): Promise<Mermaid> {
+  if (!mermaidLib) {
+    mermaidLib = import("mermaid").then((m) => {
+      m.default.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "neutral",
+      });
+      return m.default;
+    });
+  }
+  return mermaidLib;
+}
+
+/**
+ * 预览渲染后的补完：本地图片转 data URL、Mermaid 画成 SVG。
+ *
+ * 都要等 DOM 出来才能做，所以放在 `nextTick` 之后；异步期间可能已经换了文件，
+ * 用 `mdToken` 丢弃过期结果。
+ */
+async function paintPreview() {
+  if (!isMd.value || mdView.value !== "preview") return;
+  await nextTick();
+  const box = mdBox.value;
+  if (!box) return;
+  const token = ++mdToken;
+
+  // webview 读不到本地文件，图片必须后端转成 data URL
+  const imgs = Array.from(box.querySelectorAll<HTMLImageElement>("img"));
+  await Promise.all(
+    imgs.map(async (img) => {
+      const raw = img.getAttribute("src") ?? "";
+      if (!raw || /^(data:|https?:|blob:)/i.test(raw)) return;
+      const path = resolveAssetPath(picked.value ?? "", decodeRef(raw));
+      const dir = selSource.value?.dir;
+      if (!path || !dir) return;
+      try {
+        const dataUrl = await api.browseReadImage(dir, path);
+        if (token === mdToken) img.src = dataUrl;
+      } catch {
+        if (token === mdToken) img.classList.add("md-img-bad");
+      }
+    }),
+  );
+
+  const blocks = mdRender.value.mermaid;
+  if (!blocks.length || token !== mdToken) return;
+  const mermaid = await loadMermaid();
+  for (const b of blocks) {
+    if (token !== mdToken) return;
+    const host = box.querySelector<HTMLElement>(
+      `[data-mermaid-id="${b.id}"]`,
+    );
+    if (!host) continue;
+    try {
+      const { svg } = await mermaid.render(`gws-md-${token}-${b.id}`, b.code);
+      if (token !== mdToken) return;
+      host.innerHTML = svg;
+      host.classList.add("mermaid-ok");
+    } catch {
+      if (token !== mdToken) return;
+      host.classList.add("mermaid-fail");
+      const pre = document.createElement("pre");
+      pre.textContent = b.code;
+      host.replaceChildren(pre);
+    }
+  }
+}
+
+/** 预览里的链接：外链交给系统浏览器，站内相对路径继续在本组件里打开。 */
+function onMdClick(e: MouseEvent) {
+  const a = (e.target as HTMLElement | null)?.closest("a");
+  const href = a?.getAttribute("href") ?? "";
+  if (!a || !href) return;
+  if (href.startsWith("#")) {
+    e.preventDefault();
+    const id = decodeRef(href.slice(1));
+    const el = id ? mdBox.value?.querySelector(`[id="${id.replace(/"/g, '\\"')}"]`) : null;
+    el?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+    return;
+  }
+  e.preventDefault();
+  if (isExternalLink(href)) {
+    void api.openUrl(href);
+    return;
+  }
+  const next = resolveAssetPath(picked.value ?? "", decodeRef(href));
+  if (next) void openFile(next, selSource.value ?? undefined);
 }
 
 function enterDir(name: string) {
@@ -704,6 +978,25 @@ watch(
   },
 );
 
+// 内容或视图变了就补一次预览（图片 / Mermaid 都需要等 DOM），
+// 并让已打开的查找条跟着重新定位。
+watch([picked, content, mdView, pane, mode, diff], async () => {
+  await paintPreview();
+  if (findOpen.value && findQ.value.trim()) refreshFind(false);
+});
+
+// 输入即查，跟编辑器的增量查找一致
+watch(findQ, () => {
+  if (findOpen.value) refreshFind(true);
+});
+
+// 切换「完整内容」要重新拉 diff（上下文行数是 git 生成时就定死的）
+watch(showFullDiff, () => {
+  if (!picked.value || mode.value === "tree" || pane.value !== "diff") return;
+  if (mode.value === "history" && selCommit.value) void openCommitFile(picked.value);
+  else void openFile(picked.value, selSource.value ?? undefined);
+});
+
 /**
  * 切到哪一页，就把那一页的数据补上。
  *
@@ -724,6 +1017,7 @@ watch(mode, (m) => {
 });
 
 onMounted(async () => {
+  window.addEventListener("keydown", onFindHotkey);
   // **只在自己那一页才去读 git**：文件树纯粹是列目录、读文件，跟 git 无关。
   if (mode.value === "tree") {
     // 文件树：只要「目录信息」（不读 git），再列目录
@@ -733,6 +1027,11 @@ onMounted(async () => {
     void loadChanged();
     if (!wholeWs.value) void loadHistory();
   }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("keydown", onFindHotkey);
+  clearFindHighlights();
 });
 </script>
 
@@ -1000,7 +1299,40 @@ onMounted(async () => {
             {{ selCommit.date }} · {{ selCommit.author }} · {{ selCommit.subject }}
           </span>
           <span v-else-if="authorInfo" class="muted small">{{ authorInfo }}</span>
+          <!-- 行数 / 字数：写文档时想知道这一篇多长 -->
+          <span v-if="contentStats" class="muted small">
+            {{ contentStats.lines }} 行 · {{ contentStats.chars }} 字
+          </span>
+          <!-- Markdown 默认给预览，需要看原始文本时切源码 -->
+          <div v-if="isMd && (mode === 'tree' || pane === 'content')" class="view-toggle">
+            <button :class="{ on: mdView === 'preview' }" @click="mdView = 'preview'">预览</button>
+            <button :class="{ on: mdView === 'source' }" @click="mdView = 'source'">源码</button>
+          </div>
+          <NButton size="tiny" :disabled="!content && !diff" @click="openFind">查找</NButton>
           <NButton size="tiny" @click="copy(picked!, '文件路径')">复制路径</NButton>
+        </div>
+        <!-- 文档内查找：只查当前这份文档，Cmd/Ctrl+F 也能打开 -->
+        <div v-if="findOpen" class="find-bar">
+          <div class="find-input" @keydown="onFindKey">
+            <NInput
+              ref="findInput"
+              v-model:value="findQ"
+              :input-props="NO_AUTO"
+              size="tiny"
+              clearable
+              placeholder="在本文档中查找…"
+            />
+          </div>
+          <span class="find-count">
+            {{ findQ.trim() ? `${findTotal ? findCur + 1 : 0}/${findTotal}` : "0/0" }}
+          </span>
+          <NButton size="tiny" text :disabled="!findTotal" title="上一个（Shift+Enter）" @click="stepFind(-1)">
+            上一个
+          </NButton>
+          <NButton size="tiny" text :disabled="!findTotal" title="下一个（Enter）" @click="stepFind(1)">
+            下一个
+          </NButton>
+          <NButton size="tiny" text @click="closeFind">关闭</NButton>
         </div>
         <NAlert v-if="fileErr" type="error" :bordered="false" class="small">{{ fileErr }}</NAlert>
         <template v-else>
@@ -1011,20 +1343,42 @@ onMounted(async () => {
               {{ diffLabel }}
             </button>
             <button :class="{ on: pane === 'content' }" @click="pane = 'content'">内容</button>
+            <button
+              v-if="pane === 'diff'"
+              class="full-diff"
+              :class="{ on: showFullDiff }"
+              :title="
+                showFullDiff
+                  ? '当前显示整份文件；关掉可只看改动附近'
+                  : '未改动的部分目前折叠；打开后显示整份文件（diff 会很长）'
+              "
+              @click="showFullDiff = !showFullDiff"
+            >
+              完整内容
+            </button>
           </div>
 
           <div class="pane">
             <NSpin v-if="loadingFile" size="small" />
             <!-- 文件树：直接给内容，没有第二层标签 -->
-            <div v-else-if="mode === 'tree'" class="code">
-              <p v-if="!content" class="muted small">（这个文件读不出来，可能已被删除）</p>
-              <div v-for="(l, i) in contentLines" :key="i" class="line ctx">
-                <span class="no">{{ i + 1 }}</span><span class="no"></span><span class="txt">{{ l || " " }}</span>
+            <template v-else-if="mode === 'tree'">
+              <div
+                v-if="isMd && mdView === 'preview'"
+                ref="mdBox"
+                class="md-body"
+                v-html="mdRender.html"
+                @click="onMdClick"
+              ></div>
+              <div v-else class="code" ref="codeBox">
+                <p v-if="!content" class="muted small">（这个文件读不出来，可能已被删除）</p>
+                <div v-for="(l, i) in contentLines" :key="i" class="line ctx">
+                  <span class="no">{{ i + 1 }}</span><span class="no"></span><span class="txt">{{ l || " " }}</span>
+                </div>
               </div>
-            </div>
+            </template>
             <template v-else-if="pane === 'diff'">
               <pre v-if="diffStat" class="stat">{{ diffStat }}</pre>
-              <div v-if="diff" class="code">
+              <div v-if="diff" class="code" ref="diffBox">
                 <div
                   v-for="(l, i) in diffLines"
                   :key="i"
@@ -1036,9 +1390,20 @@ onMounted(async () => {
                 该文件相对{{ baseShort }}没有改动
               </p>
             </template>
-            <div v-else class="code">
-              <div v-for="(l, i) in contentLines" :key="i" class="line ctx"><span class="no">{{ i + 1 }}</span><span class="no"></span><span class="txt">{{ l || " " }}</span></div>
-            </div>
+            <template v-else>
+              <div
+                v-if="isMd && mdView === 'preview'"
+                ref="mdBox"
+                class="md-body"
+                v-html="mdRender.html"
+                @click="onMdClick"
+              ></div>
+              <div v-else class="code" ref="codeBox">
+                <div v-for="(l, i) in contentLines" :key="i" class="line ctx">
+                  <span class="no">{{ i + 1 }}</span><span class="no"></span><span class="txt">{{ l || " " }}</span>
+                </div>
+              </div>
+            </template>
           </div>
         </template>
       </template>
@@ -1096,6 +1461,170 @@ onMounted(async () => {
 .rtabs button.on {
   background: rgba(37, 99, 235, 0.1);
   border-color: #2563eb;
+}
+.rtabs .full-diff {
+  margin-left: auto;
+}
+/* ── 文档内查找 ── */
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-bottom: 6px;
+  padding: 2px 4px;
+}
+.find-input {
+  width: 240px;
+}
+.find-count {
+  min-width: 48px;
+  text-align: right;
+  color: #666;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* CSS Custom Highlight API：伪元素不能带 scoped 属性，用 :global 穿透 */
+:global(::highlight(gws-find)) {
+  background-color: rgba(255, 214, 0, 0.45);
+  color: inherit;
+}
+:global(::highlight(gws-find-current)) {
+  background-color: #ffb300;
+  color: #000;
+}
+.view-toggle {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.view-toggle button {
+  border: 1px solid var(--xg-border);
+  background: none;
+  border-radius: 5px;
+  padding: 2px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: inherit;
+}
+.view-toggle button.on {
+  background: rgba(37, 99, 235, 0.1);
+  border-color: #2563eb;
+}
+/* Markdown 预览：占满右侧并自己滚，排版只作用于 v-html 生成的内容 */
+.md-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 20px 28px;
+  border: 1px solid var(--xg-border);
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.md-body :deep(h1),
+.md-body :deep(h2),
+.md-body :deep(h3),
+.md-body :deep(h4) {
+  margin: 1.2em 0 0.5em;
+  line-height: 1.35;
+  font-weight: 600;
+}
+.md-body :deep(h1) {
+  font-size: 22px;
+  border-bottom: 1px solid var(--xg-border);
+  padding-bottom: 6px;
+}
+.md-body :deep(h2) {
+  font-size: 18px;
+}
+.md-body :deep(h3) {
+  font-size: 15px;
+}
+.md-body :deep(p) {
+  margin: 0.6em 0;
+}
+.md-body :deep(ul),
+.md-body :deep(ol) {
+  margin: 0.5em 0;
+  padding-left: 24px;
+}
+.md-body :deep(li) {
+  margin: 0.2em 0;
+}
+.md-body :deep(a) {
+  color: #2563eb;
+  text-decoration: none;
+}
+.md-body :deep(a:hover) {
+  text-decoration: underline;
+}
+.md-body :deep(img) {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+.md-body :deep(img.md-img-bad) {
+  min-height: 24px;
+  outline: 1px dashed #d03050;
+}
+.md-body :deep(code) {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  background: var(--xg-fill-soft);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.md-body :deep(pre) {
+  background: var(--xg-fill-soft);
+  padding: 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.md-body :deep(pre code) {
+  background: none;
+  padding: 0;
+}
+.md-body :deep(blockquote) {
+  margin: 0.8em 0;
+  padding: 2px 14px;
+  border-left: 3px solid var(--xg-border);
+  color: #888;
+}
+.md-body :deep(table) {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+}
+.md-body :deep(th),
+.md-body :deep(td) {
+  border: 1px solid var(--xg-border);
+  padding: 6px 10px;
+}
+.md-body :deep(th) {
+  background: var(--xg-fill-soft);
+  font-weight: 600;
+}
+.md-body :deep(hr) {
+  border: none;
+  border-top: 1px solid var(--xg-border);
+  margin: 1.2em 0;
+}
+.md-body :deep(.mermaid-ok) {
+  margin: 1em 0;
+  text-align: center;
+  overflow-x: auto;
+}
+.md-body :deep(.mermaid-ok svg) {
+  max-width: 100%;
+  height: auto;
+}
+.md-body :deep(.mermaid-fail pre) {
+  text-align: left;
+  color: #d03050;
 }
 /* 右侧的滚动容器：**吃掉剩余高度**并自己滚。
    它必须真的能缩（min-height: 0），否则 flex 子项的下限是内容高度、

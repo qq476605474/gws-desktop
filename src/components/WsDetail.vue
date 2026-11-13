@@ -105,10 +105,24 @@ const showAdd = ref(false);
  * 「浏览文件」看真实文件（文件树），「对比代码」默认看与本地（未提交的改动）的
  * 差异 —— 需求分支常常还没推送，那时跟远程比没有基准。两个按钮，两件事（实测反馈）。
  */
-const browse = ref<{ module: string; mode: "tree" | "changed" } | null>(null);
+const browse = ref<{
+  module: string;
+  mode: "tree" | "changed";
+  /** 覆盖默认的 `wsPath/<module>`（如需求文档的期次目录）。 */
+  dir?: string;
+  label?: string;
+} | null>(null);
 
 function openBrowse(module: string, mode: "tree" | "changed") {
   browse.value = { module, mode };
+}
+
+/** 从「需求相关文档」直接进可预览的浏览窗口（Markdown 默认预览）。 */
+function openDocBrowse() {
+  const dir = doc.value?.dir;
+  if (!dir) return;
+  showDoc.value = false;
+  browse.value = { module: DOCHUB.value, mode: "tree", dir, label: "需求文档" };
 }
 /** 合并到环境检查（合进环境后看结果）。 */
 const showMergeCheck = ref(false);
@@ -708,6 +722,16 @@ async function dropModule(m: ModuleStatus) {
   });
 }
 
+function confirmRemove() {
+  dialog.warning({
+    title: "删除需求",
+    content: `确定删除「${meta.value?.title || branch.value}」？\n会删掉本地工作目录与本地分支，删除后不可恢复。`,
+    positiveText: "删除",
+    negativeText: "取消",
+    onPositiveClick: () => removeWs(),
+  });
+}
+
 async function removeWs() {
   try {
     // 先不带 force 试一次：有未保存的工作时它会返回风险清单而不删除，
@@ -850,11 +874,18 @@ async function commitEdit() {
            一样的需求（分支、模块、基线、分类、自定义信息全都带过去）。
            提测时也用这个 —— 不用再把分支名念一遍。 -->
       <NButton size="tiny" secondary :loading="sharing" @click="copyShare">导出需求配置</NButton>
+      <span class="head-sep" aria-hidden="true" />
+      <!-- 目录操作放一组：打开 / 复制 / 编辑器 / 终端 都是「进这个目录」，
+           混排会让人每次都要找一遍（实测反馈） -->
       <NButton size="tiny" secondary @click="openInFinder(wsPath)">打开目录</NButton>
+      <NButton size="tiny" secondary @click="copy(wsPath, '目录')">复制目录</NButton>
       <EditorButton size="tiny" :path="wsPath" />
       <NButton size="tiny" secondary @click="openInTerminal(wsPath, app.terminal)">终端</NButton>
-      <NButton size="tiny" secondary @click="copy(wsPath, '目录')">复制目录</NButton>
+      <span class="head-sep" aria-hidden="true" />
       <NButton size="tiny" secondary @click="refresh">刷新</NButton>
+      <!-- 删除是需求级危险操作，原来只在「需求设置」里，同事普遍不知道有它
+           （实测反馈）。放到头部、用危险色，但点击后仍要二次确认。 -->
+      <NButton size="tiny" secondary type="error" @click="confirmRemove">删除需求</NButton>
     </header>
 
     <NAlert v-if="err" type="error" :bordered="false" class="err">
@@ -1139,18 +1170,6 @@ async function commitEdit() {
             </div>
           </div>
         </NCard>
-
-        <NCard size="small" class="meta danger">
-          <div class="danger-row">
-            <div>
-              <div class="danger-title">删除需求</div>
-              <div class="muted small">
-                会删掉本地工作目录与本地分支。有未保存的工作时会先列出风险项让你确认。
-              </div>
-            </div>
-            <NButton size="small" type="error" @click="removeWs">删除</NButton>
-          </div>
-        </NCard>
       </NTabPane>
     </NTabs>
 
@@ -1241,15 +1260,19 @@ async function commitEdit() {
       :show="true"
       @update:show="(v: boolean) => !v && (browse = null)"
       preset="card"
-      :title="browse.mode === 'tree' ? `浏览文件 · ${browse.module}` : `对比代码 · ${browse.module}`"
+      :title="
+        browse.mode === 'tree'
+          ? `浏览文件 · ${browse.label ?? browse.module}`
+          : `对比代码 · ${browse.label ?? browse.module}`
+      "
       style="width: 92vw; height: 88vh"
       @close="browse = null"
     >
       <FileBrowser
-        :dir="`${wsPath}/${browse.module}`"
+        :dir="browse.dir ?? `${wsPath}/${browse.module}`"
         :repo="browse.module"
         :branch="branch"
-        :label="browse.module"
+        :label="browse.label ?? browse.module"
         :ws-branch="branch"
         :default-mode="browse.mode"
       />
@@ -1301,9 +1324,10 @@ async function commitEdit() {
       </template>
       <template #footer>
         <div class="footer">
+          <NButton type="primary" @click="openDocBrowse">浏览文档</NButton>
           <NButton @click="openInFinder(doc?.dir ?? wsPath)">打开目录</NButton>
           <EditorButton size="medium" :path="doc?.dir ?? wsPath" :secondary="false" />
-          <NButton type="primary" @click="showDoc = false">关闭</NButton>
+          <NButton @click="showDoc = false">关闭</NButton>
         </div>
       </template>
     </NModal>
@@ -1451,6 +1475,14 @@ async function commitEdit() {
 .spacer {
   flex: 1;
 }
+/* 头部按钮分组用的细竖线：让「目录操作」「页面操作」一眼分开 */
+.head-sep {
+  width: 1px;
+  height: 16px;
+  background: #e3e3e3;
+  margin: 0 2px;
+  flex: 0 0 auto;
+}
 .ws-note {
   margin: 0;
   white-space: pre-wrap;
@@ -1593,14 +1625,5 @@ async function commitEdit() {
 }
 .meta-edit .muted {
   grid-column: 2;
-}
-.danger-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-}
-.danger-title {
-  font-weight: 500;
 }
 </style>
