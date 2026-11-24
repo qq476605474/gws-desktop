@@ -83,4 +83,24 @@ impl Error {
     pub fn other(msg: impl Into<String>) -> Self {
         Error::Other(msg.into())
     }
+
+    /// **给进度行/表格用的一句原因**。
+    ///
+    /// `to_string()` 对 git 失败会带上整条命令（`git 命令失败: git fetch --prune ...`），
+    /// 放进进度条或表格的一行里会把真正的原因挤掉。这里只留原因本身：
+    ///
+    /// - git 失败 → stderr 摘要（已由 `git::stderr_summary` 挑过关键行）
+    /// - 其它错误 → 原样
+    pub fn brief(&self) -> String {
+        match self {
+            Error::Git { stderr, args } => {
+                if stderr.trim().is_empty() {
+                    format!("git {args} 失败（没有任何输出）")
+                } else {
+                    stderr.clone()
+                }
+            }
+            other => other.to_string(),
+        }
+    }
 }

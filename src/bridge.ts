@@ -11,6 +11,7 @@ import type {
   AttachOutcome,
   CloseOutcome,
   CommitOutcome,
+  CompareOutcome,
   QuickLink,
   RepoImportResult,
   ShareImportResult,
@@ -275,6 +276,9 @@ export const mrPlan = (input: MrInput) => tracked(invoke<MrPlan>("mr_plan", { in
 export const mrCreate = (input: MrInput) => tracked(invoke<MrPlan>("mr_create", { input }));
 export const mrClose = (branch: string, filter: FilterInput = {}) =>
   tracked(invoke<CloseOutcome>("mr_close", { branch, filter }));
+/** 只生成对比链接（不创建 MR，也不联网）。 */
+export const mrLinks = (branch: string, filter: FilterInput = {}) =>
+  plain(invoke<CompareOutcome>("mr_links", { branch, filter }));
 export const mrReviewers = (branch?: string) =>
   plain(invoke<ReviewerInfo>("mr_reviewers", { branch: branch ?? null }));
 export const mrSaveReviewers = (branch: string, front: string, back: string) =>

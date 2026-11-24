@@ -136,6 +136,7 @@ vi.mock("../bridge", async (importOriginal) => {
     // 合并到环境：结果里要能直接打开环境里的那份代码
     wsMerge: vi.fn().mockResolvedValue({
       env: "dev",
+      req_branch: "feature-x",
       stale: [],
       pending: [],
       clean: ["demo-api"],
@@ -338,6 +339,7 @@ describe("合并到环境后直接打开目录", () => {
     // 很容易找错。合并结果里直接给出入口。
     (api.wsMerge as ReturnType<typeof vi.fn>).mockResolvedValue({
       env: "dev",
+      req_branch: "feature-x",
       stale: [],
       pending: [],
       clean: [],

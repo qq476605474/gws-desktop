@@ -69,7 +69,20 @@ watch(
   () => void load(),
 );
 
-async function load() {
+/**
+ * 并发去重：`onMounted` 与窗口聚焦触发的 `refreshTick` 很容易撞在一起，
+ * 撞上就会对同一个 doc-hub 跑两遍扫描（几十个 git 子进程）。
+ */
+let loadingPromise: Promise<void> | null = null;
+function load(): Promise<void> {
+  if (loadingPromise) return loadingPromise;
+  loadingPromise = doLoad().finally(() => {
+    loadingPromise = null;
+  });
+  return loadingPromise;
+}
+
+async function doLoad() {
   loading.value = true;
   try {
     families.value = await api.docFamilies();

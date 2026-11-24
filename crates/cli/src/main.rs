@@ -134,6 +134,9 @@ enum Command {
         filter: FilterArgs,
     },
 
+    /// 提交当前需求的本地改动（缺省只提交，加 --push 顺带推送）
+    Commit(CommitArgs),
+
     /// 拉取他人在同一需求分支上的提交
     Pull {
         #[command(flatten)]
@@ -336,6 +339,18 @@ struct SyncMainArgs {
 }
 
 #[derive(Args)]
+struct CommitArgs {
+    #[command(flatten)]
+    filter: FilterArgs,
+    /// 提交说明（缺省 `chore: 提交 <需求分支> 的改动`）
+    #[arg(long, short)]
+    message: Option<String>,
+    /// 提交后顺带推送到远程
+    #[arg(long)]
+    push: bool,
+}
+
+#[derive(Args)]
 struct MrArgs {
     /// 真正创建（缺省只预览，不写任何东西）
     #[arg(long)]
@@ -343,6 +358,9 @@ struct MrArgs {
     /// 关闭本需求的 MR（只关闭，不碰分支）
     #[arg(long, conflicts_with = "create")]
     close: bool,
+    /// 只输出「对比代码」链接（不创建 MR、不需要 token）
+    #[arg(long, conflicts_with_all = ["create", "close"])]
+    links: bool,
     /// MR 标题（缺省用需求中文名）
     #[arg(long, short)]
     title: Option<String>,
@@ -622,6 +640,28 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 ExitCode::FAILURE
             })
         }
+        Command::Commit(args) => {
+            let (hub, ws) = current()?;
+            let filter = args.filter.to_filter();
+            let text = args.message.clone().unwrap_or_default();
+            let out = sync::commit_with(&hub, &ws, &filter, &text, Some(&stderr_reporter))?;
+            render::commit_outcome(&out);
+            if out.conflicts.is_empty() && out.failed.is_empty() {
+                if args.push {
+                    println!();
+                    let pushed = sync::push(&hub, &ws, &filter)?;
+                    render::push_outcome(&pushed);
+                    return Ok(if pushed.is_clean() {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    });
+                }
+                Ok(ExitCode::SUCCESS)
+            } else {
+                Ok(ExitCode::FAILURE)
+            }
+        }
         Command::Pull { filter, rebase } => {
             let (hub, ws) = current()?;
             let out = sync::pull(&hub, &ws, &filter.to_filter(), rebase)?;
@@ -643,7 +683,9 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 args.force,
             )?;
             render::merge_outcome(&out);
-            Ok(if out.has_conflicts() {
+            // 分叉（未加 --force，本轮什么都没合）也要非零：否则脚本会把
+            // 「一个模块都没合」当成成功（实测 BUG：界面说已合并，实际 HEAD 没动）。
+            Ok(if out.has_conflicts() || out.needs_force() {
                 ExitCode::FAILURE
             } else {
                 ExitCode::SUCCESS
@@ -1107,8 +1149,16 @@ fn cmd_clean(hub: Hub, apply: bool) -> Result<ExitCode> {
 
 fn cmd_mr(args: MrArgs) -> Result<ExitCode> {
     let (hub, mut ws) = current()?;
-    let client = Client::for_hub(&hub)?;
     let filter = args.filter.to_filter();
+
+    // 只出链接：不联网、不需要 token、不写任何东西，放在最前面
+    if args.links {
+        let out = mr::compare_links(&hub, &ws, &filter)?;
+        render::mr_links(&out);
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let client = Client::for_hub(&hub)?;
 
     if args.close {
         let out = mr::close(&hub, &mut ws, &client, &filter)?;

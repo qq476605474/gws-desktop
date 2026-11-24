@@ -112,6 +112,20 @@ pub async fn mr_close(
     .await
 }
 
+/// 只生成「对比代码」链接（不创建 MR、不联网、不需要 token）。
+#[tauri::command]
+pub fn mr_links(
+    branch: String,
+    filter: FilterInput,
+    app: State<'_, App>,
+) -> CmdResult<mr::CompareOutcome> {
+    app.with_hub(|hub| {
+        let ws = Workspace::open(hub, &branch)?;
+        let f: ModuleFilter = filter.into();
+        mr::compare_links(hub, &ws, &f)
+    })
+}
+
 /// 当前生效的评审人（含来源链），供界面在弹窗里预填。
 ///
 /// 开源版**没有内置默认评审人**，因此这里不再带「显示名」字段 —— 编译期无从

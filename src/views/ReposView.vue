@@ -26,7 +26,15 @@ import { withBusy } from "../busy";
 import * as fmt from "../format";
 import { gitlabBranchUrl } from "../types";
 import { overrideRepoOptions } from "../lib/envOverride";
-import type { EnvRow, GitlabProject, Link, RepoRow, SharedRepo } from "../types";
+import type {
+  EnvRow,
+  GitlabProject,
+  Link,
+  RepoAddOutcome,
+  RepoOutcome,
+  RepoRow,
+  SharedRepo,
+} from "../types";
 import RepoDetail from "../components/RepoDetail.vue";
 import EditorButton from "../components/EditorButton.vue";
 import SyncDialog from "../components/SyncDialog.vue";
@@ -308,6 +316,35 @@ async function copyRepoShare(r: RepoRow) {
   }
 }
 
+/**
+ * 逐仓库报结果。
+ *
+ * 原来这里只说「已添加 N 个」——失败的那些**一个字都没有**，用户看着
+ * 「成功」却少了一半仓库。失败原因（尤其 git 给的关键行）必须逐条摆出来。
+ */
+function reportRepoOutcomes(r: RepoAddOutcome, done: string) {
+  const ok = r.repos.filter((x) => x.outcome === "Ok").length;
+  const skipped = r.repos.filter(
+    (x) => typeof x.outcome === "object" && "Skipped" in x.outcome,
+  ).length;
+  if (ok || skipped) {
+    msg.success(`${done} ${ok} 个仓库${skipped ? `，${skipped} 个本地已有` : ""}`);
+  }
+  const failed = r.repos.filter(
+    (x): x is RepoOutcome & { outcome: { Failed: string } } =>
+      typeof x.outcome === "object" && "Failed" in x.outcome,
+  );
+  if (failed.length) {
+    dialog.warning({
+      title: `${failed.length} 个仓库没拉下来`,
+      content: () => failed.map((x) => `${x.name}\n  ${x.outcome.Failed}`).join("\n\n"),
+      positiveText: "知道了",
+    });
+  }
+  if (r.env_created.length) msg.success(`已在环境里补建 ${r.env_created.length} 份检出`);
+  for (const [what, why] of r.env_failures) msg.warning(`环境补齐失败 ${what}：${why}`);
+}
+
 async function doAdd() {
   if (addMode.value === "paste") {
     await doImportRepo();
@@ -327,14 +364,7 @@ async function doAdd() {
     // 加完仓库会**自动把环境补齐**（新增仓库在每个环境里都缺一份检出），
     // 所以这一步比单纯的 clone 慢，提示里说清是在做两件事
     const r = await withBusy(`添加 ${urls.length} 个仓库并补齐环境`, () => api.repoAdd(urls));
-    const okCount = r.repos.filter((x) => x.outcome === "Ok").length;
-    msg.success(`已添加 ${okCount} 个仓库`);
-    if (r.env_created.length) {
-      msg.success(`已在环境里补建 ${r.env_created.length} 份检出`);
-    }
-    for (const [what, why] of r.env_failures) {
-      msg.warning(`环境补齐失败 ${what}：${why}`);
-    }
+    reportRepoOutcomes(r, "已添加");
     showAdd.value = false;
     glPicked.value = [];
     await app.refreshAll();

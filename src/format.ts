@@ -69,7 +69,44 @@ export function pullLines(o: PullOutcome): string[] {
 export function mergeLines(o: MergeOutcome): string[] {
   const out: string[] = [];
   for (const m of o.stale) out.push(`⚠ ${m}: 环境分支在远程被重建过，本地副本已按远程重置后重新合并`);
-  for (const [m, n] of o.pending) out.push(`~ ${m}  (${n} 个提交待推)`);
+  // **按 pending 的真实原因分别报**：分叉那种本轮压根没合并，
+  // 一律说「已合并」会让人误判状态（实测 BUG）。
+  for (const [m, r] of o.pending) {
+    switch (r.kind) {
+      case "env_ahead":
+        out.push(`~ ${m}: 本轮未重新合并（本地相对远程已有 ${r.ahead} 个未推送提交，未动）`);
+        break;
+      case "requirement_unpushed":
+        out.push(`~ ${m}: 本地另有 ${r.ahead} 个需求提交未推送，未含在本次合并里`);
+        break;
+      case "env_rolled_back": {
+        const branch = o.branches?.[m] ?? o.env;
+        out.push(`⚠ ${m}: 本轮未合并`);
+        out.push(
+          `     远程 origin/${branch} 被回退过，本地 envs/${o.env} 里还带着回退前的 ${r.ahead} 个提交` +
+            `（可能含他人已合入的内容）`,
+        );
+        out.push("     直接推送会把它们一并恢复；只推本次需求请先重新对齐：勾选「强制重建」再合并");
+        out.push(
+          `     （强制重建会丢弃本地 envs/${o.env} 里这 ${r.ahead} 个未推送提交，按远程最新 + 本需求重合）`,
+        );
+        break;
+      }
+      case "env_diverged": {
+        // 报**实际环境分支**，不是环境标识（pre ≠ pre-202610，已有回归测试）。
+        const branch = o.branches?.[m] ?? o.env;
+        out.push(`⚠ ${m}: 本轮未合并`);
+        out.push(
+          `     本地 envs/${o.env} 的 ${branch} 与 origin/${branch} 分叉：` +
+            `${r.rebuilt ? "远程被重建（force push）过，" : ""}有 ${r.behind} 个本地没有的新提交；` +
+            `本地另有 ${r.ahead} 个未推送提交`,
+        );
+        out.push(`     需要以远程为准重新合并：勾选「强制重建」再合并`);
+        out.push(`     （强制重建会丢弃本地 envs/${o.env} 里这 ${r.ahead} 个未推送提交）`);
+        break;
+      }
+    }
+  }
   for (const m of o.clean) out.push(`✓ ${m}`);
   for (const [m, why] of o.skipped) out.push(`- ${m}  ${why}`);
   for (const [m, why] of o.push_failed) out.push(`✗ ${m} 推送失败: ${why}`);
@@ -93,6 +130,13 @@ export function mergeLines(o: MergeOutcome): string[] {
     return out;
   }
 
+  const merged = o.clean.length;
+  const needsForce = o.pending.filter(
+    ([, r]) => r.kind === "env_diverged" || r.kind === "env_rolled_back",
+  ).length;
+  const envAhead = o.pending.some(([, r]) => r.kind === "env_ahead");
+  const reqUnpushed = o.pending.some(([, r]) => r.kind === "requirement_unpushed");
+
   if (o.did_push) {
     out.push("");
     out.push(
@@ -100,9 +144,25 @@ export function mergeLines(o: MergeOutcome): string[] {
         ? `✓ 已合入并推送 ${pushedTargets(o)}（${o.pushed.length} 个模块）`
         : "⚠ 没有任何模块可推送（见上方跳过项）",
     );
-  } else if (o.clean.length || o.pending.length) {
+  } else if (merged > 0) {
     out.push("");
-    out.push(`  已合并到本地 envs/${o.env}，确认无误后再点一次并勾选「推送到远程」`);
+    if (needsForce > 0) out.push(`⚠ 另有 ${needsForce} 个模块本轮未合并（需先与远程对齐，见上）`);
+    if (reqUnpushed) {
+      out.push(`  已合并到本地 envs/${o.env}（${merged} 个模块），但不含需求分支未推送的提交（见上）`);
+      out.push("  先在「模块」页推送需求分支，再合并一次");
+    } else {
+      out.push(`  已合并到本地 envs/${o.env}（${merged} 个模块），确认无误后再点一次并勾选「推送到远程」`);
+    }
+  } else if (needsForce > 0) {
+    // **绝不能落进「已合并」**：这一支里本地 envs 的 HEAD 一动没动。
+    out.push("");
+    out.push(`⚠ 本轮没有合并任何模块：${needsForce} 个模块需先与远程对齐（见上）`);
+    out.push("  需要勾选「强制重建」再合并（会丢弃本地未推送的成果）");
+  } else if (envAhead) {
+    // 上次合好的成果还在本地、远程没动：本轮只是跳过，不能说「已合并」。
+    out.push("");
+    out.push("  本轮未重新合并：本地已有之前合好的未推送成果（见上）");
+    out.push("  确认无误后再点一次并勾选「推送到远程」；如需以远程为准，勾选「强制重建」");
   } else {
     out.push("");
     out.push(`⚠ 没有任何模块合入 ${o.env}（${o.skipped.length} 个被跳过）`);
@@ -134,7 +194,10 @@ function pushedTargets(o: MergeOutcome): string {
  */
 function credentialHint(reasons: string[]): string[] {
   const hit = reasons.some(
-    (r) => /could not read Username|Authentication failed|401|403/i.test(r),
+    (r) =>
+      /could not read Username|Authentication failed|terminal prompts disabled|Device not configured|401|403/i.test(
+        r,
+      ),
   );
   return hit
     ? ["  → 这多半是没配 GitLab 凭据：到「设置」页填一下 token（需要 api 权限），", "     或先在你自己的终端里 clone 一次这个仓库，让 git 记住凭据"]
@@ -181,6 +244,12 @@ export function syncLines(o: SyncOutcome): string[] {
     for (const [e, m, d] of o.env_moved) out.push(`     ${e}/${m}  ${d}`);
   }
   for (const [n, why] of o.env_failures) out.push(`✗ envs/${n}  ${why}`);
+  out.push(
+    ...credentialHint([
+      ...o.repo_failures.map(([, why]) => why),
+      ...o.env_failures.map(([, why]) => why),
+    ]),
+  );
   if (!o.repo_failures.length && !o.env_failures.length) {
     out.push("");
     out.push("✓ 全部同步完成");

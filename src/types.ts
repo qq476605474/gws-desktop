@@ -309,10 +309,24 @@ export interface CommitOutcome {
   failed: [string, string][];
 }
 
+/** 一个模块「本轮没有（完整）合并」的原因（与 Rust 侧 `PendingReason` 一一对应）。 */
+export type PendingReason =
+  /** 需求分支本地有未推送提交：合入的是 origin/<需求分支>，这些提交没进去。 */
+  | { kind: "requirement_unpushed"; ahead: number }
+  /** 本地已有之前合好的未推送成果，远程没动：本轮跳过、不重合。 */
+  | { kind: "env_ahead"; ahead: number }
+  /** 远程分支被回退过（回退点是本地的祖先）：快进推送会把回退前的历史一并恢复。 */
+  | { kind: "env_rolled_back"; ahead: number }
+  /** 本地环境分支与远程分叉（远程前进或被 force push 重建）：本轮完全没合。 */
+  | { kind: "env_diverged"; ahead: number; behind: number; rebuilt: boolean };
+
 export interface MergeOutcome {
   env: string;
+  /** 需求分支名（文案里报「合入的是 origin/<需求分支>」）。 */
+  req_branch: string;
   stale: string[];
-  pending: [string, number][];
+  /** 本轮没有（完整）合并的模块与原因。 */
+  pending: [string, PendingReason][];
   clean: string[];
   skipped: [string, string][];
   conflicts: string[];
@@ -472,6 +486,23 @@ export interface CloseOutcome {
   closed: [string, string][];
   skipped: [string, string][];
   failed: [string, string][];
+}
+
+/** 一个模块的 GitLab 对比页链接（不创建 MR）。 */
+export interface CompareRow {
+  module: string;
+  project: string;
+  target_branch: string;
+  source_branch: string;
+  url: string;
+  /** 提醒（分支没推送 / 有未推送提交），不影响链接本身。 */
+  note: string | null;
+}
+
+export interface CompareOutcome {
+  source_branch: string;
+  rows: CompareRow[];
+  skipped: [string, string][];
 }
 
 export interface ReviewerInfo {

@@ -13,9 +13,10 @@ use gws_core::repo::{Outcome, RepoOutcome};
 use gws_core::workspace::lifecycle::{
     CleanOutcome, DropMissingOutcome, NewOutcome, PrecheckFailure, RemoveOutcome,
 };
-use gws_core::workspace::mr::{CloseOutcome, MrPlan, Side};
+use gws_core::workspace::mr::{CloseOutcome, CompareOutcome, MrPlan, Side};
 use gws_core::workspace::sync::{
-    DoneOutcome, MergeOutcome, PullOutcome, PushOutcome, StatusReport, SyncMainOutcome, SyncOutcome,
+    CommitOutcome, DoneOutcome, MergeOutcome, PendingReason, PullOutcome, PushOutcome,
+    StatusReport, SyncMainOutcome, SyncOutcome,
 };
 use gws_core::workspace::{Workspace, WorkspaceMeta};
 
@@ -361,6 +362,33 @@ pub fn pull_outcome(out: &PullOutcome) {
     }
 }
 
+/// 提交结果（`gws commit`）。
+pub fn commit_outcome(out: &CommitOutcome) {
+    for (m, n) in &out.committed {
+        ok(format!("{m}  已提交 {n} 处改动"));
+    }
+    for m in &out.clean {
+        println!("  - {m}  没有待提交的改动");
+    }
+    for m in &out.conflicts {
+        warn(format!("{m}: 有未解决的冲突，先解冲突再提交"));
+    }
+    for (m, why) in &out.failed {
+        println!("  ✗ {m}  {why}");
+    }
+    if out.committed.is_empty()
+        && out.clean.is_empty()
+        && out.conflicts.is_empty()
+        && out.failed.is_empty()
+    {
+        info("没有需要提交的改动");
+    }
+    if !out.committed.is_empty() {
+        println!();
+        println!("  推送到远程: gws push");
+    }
+}
+
 pub fn sync_main_outcome(out: &SyncMainOutcome, ws: &Workspace) {
     for (m, note) in &out.downgraded {
         warn(format!("{m}: {note}"));
@@ -391,14 +419,85 @@ pub fn sync_main_outcome(out: &SyncMainOutcome, ws: &Workspace) {
     }
 }
 
+/// 「推到了哪条分支」。
+///
+/// **不能用环境标识**（`out.env`）：环境标识是 `pre`，而某仓库在这个环境里实际用的
+/// 分支可能是 `pre-202610`（覆盖表里写的）—— 拿标识去报，人看到的和实际发生的
+/// 对不上。各模块分支不同时逐个列出来，桌面端同款文案。
+fn pushed_targets(out: &MergeOutcome) -> String {
+    let mut bs: Vec<&str> = Vec::new();
+    for m in &out.pushed {
+        let b = out.branches.get(m).map(String::as_str).unwrap_or(&out.env);
+        if !bs.contains(&b) {
+            bs.push(b);
+        }
+    }
+    if bs.len() <= 2 {
+        bs.iter().map(|b| format!("origin/{b}")).collect::<Vec<_>>().join(" 和 ")
+    } else {
+        format!(
+            "{} 条分支：{}",
+            bs.len(),
+            bs.iter().map(|b| format!("origin/{b}")).collect::<Vec<_>>().join("、")
+        )
+    }
+}
+
 pub fn merge_outcome(out: &MergeOutcome) {
     for m in &out.stale {
         warn(format!(
             "{m}: 远程环境分支曾被重建，本地副本作废，已重置到最新并重新合并"
         ));
     }
-    for (m, n) in &out.pending {
-        println!("  ~ {m}  ({n} 个提交待推)");
+    // **按 pending 的真实原因分别报**，不能一律说「已合并」：
+    // 分叉那种本轮压根没合并，按提示去推还会非快进失败（实测 BUG）。
+    for (m, reason) in &out.pending {
+        match reason {
+            PendingReason::EnvAhead { ahead } => {
+                println!("  ~ {m}: 本轮未重新合并（本地相对远程已有 {ahead} 个未推送提交，未动）");
+            }
+            PendingReason::RequirementUnpushed { ahead } => {
+                println!("  ~ {m}: 本地另有 {ahead} 个需求提交未推送，未含在本次合并里");
+            }
+            PendingReason::EnvRolledBack { ahead } => {
+                let branch = out.branches.get(m).map(String::as_str).unwrap_or(&out.env);
+                warn(format!("{m}: 本轮未合并"));
+                println!(
+                    "     远程 origin/{branch} 被回退过，本地 envs/{} 里还带着回退前的 {ahead} 个提交（可能含他人已合入的内容）",
+                    out.env
+                );
+                println!(
+                    "     直接推送会把它们一并恢复；只推本次需求请先重新对齐: gws merge {} --only {m} --force",
+                    out.env
+                );
+                println!(
+                    "     （--force 会丢弃本地 envs/{} 里这 {ahead} 个未推送提交，按远程最新 + 本需求重合）",
+                    out.env
+                );
+            }
+            PendingReason::EnvDiverged { ahead, behind, rebuilt } => {
+                // 报**实际环境分支**，不是环境标识（pre ≠ pre-202610，已有回归测试）。
+                let branch = out.branches.get(m).map(String::as_str).unwrap_or(&out.env);
+                warn(format!("{m}: 本轮未合并"));
+                println!(
+                    "     本地 envs/{} 的 {branch} 与 origin/{branch} 分叉：{}；本地另有 {ahead} 个未推送提交",
+                    out.env,
+                    if *rebuilt {
+                        format!("远程被重建（force push）过，有 {behind} 个本地没有的新提交")
+                    } else {
+                        format!("远程有 {behind} 个本地没有的新提交")
+                    }
+                );
+                println!(
+                    "     需要以远程为准重新合并: gws merge {} --only {m} --force",
+                    out.env
+                );
+                println!(
+                    "     （--force 会丢弃本地 envs/{} 里这 {ahead} 个未推送提交）",
+                    out.env
+                );
+            }
+        }
     }
     for m in &out.clean {
         ok(m);
@@ -432,24 +531,65 @@ pub fn merge_outcome(out: &MergeOutcome) {
         return;
     }
 
+    let needs_force = out.pending.iter().filter(|(_, r)| r.needs_force()).count();
+    let env_ahead = out
+        .pending
+        .iter()
+        .any(|(_, r)| matches!(r, PendingReason::EnvAhead { .. }));
+    let req_unpushed = out
+        .pending
+        .iter()
+        .any(|(_, r)| matches!(r, PendingReason::RequirementUnpushed { .. }));
+    let merged = out.merged_count();
+
     println!();
     if out.did_push {
         if out.pushed.is_empty() {
             warn("没有任何模块可推送（见上方跳过项）");
         } else {
             ok(format!(
-                "已合入并推送 origin/{}（{} 个模块）",
-                out.env,
+                "已合入并推送 {}（{} 个模块）",
+                pushed_targets(out),
                 out.pushed.len()
             ));
         }
-    } else if !out.clean.is_empty() || !out.pending.is_empty() {
+    } else if merged > 0 {
+        if needs_force > 0 {
+            warn(format!(
+                "另有 {needs_force} 个模块本轮未合并（需先与远程对齐，见上）"
+            ));
+        }
+        if req_unpushed {
+            println!(
+                "  已合并到本地 envs/{}（{merged} 个模块），但不含需求分支未推送的提交（见上）",
+                out.env
+            );
+            println!("  先推送需求分支再合并一次: gws push → gws merge {}", out.env);
+        } else {
+            println!(
+                "  已合并到本地 envs/{}（{merged} 个模块），review 确认后再推送: gws merge {} --push",
+                out.env, out.env
+            );
+            println!(
+                "  想丢弃本地合并成果重新合并: gws merge {} --force",
+                out.env
+            );
+        }
+    } else if needs_force > 0 {
+        // **绝不能落进「已合并」**：这一支里本地 envs 的 HEAD 一动没动。
+        warn(format!(
+            "本轮没有合并任何模块：{needs_force} 个模块需先与远程对齐（见上）"
+        ));
         println!(
-            "  已合并到本地 envs/{}，review 确认后再推送: gws merge {} --push",
-            out.env, out.env
+            "  以远程为准重新合并: gws merge {} --force（会丢弃本地未推送的成果）",
+            out.env
         );
+    } else if env_ahead {
+        // 上次合好的成果还在本地、远程没动：本轮只是跳过，不能说「已合并」。
+        println!("  本轮未重新合并：本地已有之前合好的未推送成果（见上）");
+        println!("  确认无误后推送: gws merge {} --push", out.env);
         println!(
-            "  想丢弃本地合并成果重新合并: gws merge {} --force",
+            "  想以远程为准丢弃本地成果重新合并: gws merge {} --force",
             out.env
         );
     } else {
@@ -735,6 +875,25 @@ pub fn mr_close(out: &CloseOutcome) {
     if !out.closed.is_empty() {
         println!();
         println!("   注意：只关闭了 MR，源分支仍在。清理分支见 gws branch（阶段 9）");
+    }
+}
+
+/// 只输出对比链接：**每行一个 URL**，方便直接粘到别处/脚本里。
+pub fn mr_links(out: &CompareOutcome) {
+    for (m, why) in &out.skipped {
+        println!("  - {m}  {why}");
+    }
+    if out.rows.is_empty() {
+        info("没有可生成对比链接的模块");
+        return;
+    }
+    for r in &out.rows {
+        println!("{}", r.url);
+    }
+    for r in &out.rows {
+        if let Some(note) = &r.note {
+            warn(format!("{}: {note}", r.module));
+        }
     }
 }
 

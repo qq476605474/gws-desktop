@@ -245,7 +245,7 @@ async function run() {
           提交后直接推送到远程（远程上就能看到）
         </NCheckbox>
         <NCheckbox v-if="withForce" v-model:checked="force">
-          丢弃本地未推送的合并成果，从远程重新合
+          强制重建（丢弃本地未推送的合并成果，从远程重新合）
         </NCheckbox>
         <NCheckbox v-if="withRebase" v-model:checked="rebase">
           用 rebase 而不是 merge

@@ -405,10 +405,19 @@ pub fn push_with(
 
     // 第一遍：落后检查，任一模块落后就整体不动
     let mut rep = crate::progress::Reporter::start(cb, modules.len(), "检查远程是否有新提交");
+    let mut unreachable: std::collections::BTreeSet<String> = Default::default();
     for m in &modules {
         // 带 hub 的 token：私有仓库不带它 fetch 直接失败，判落后就会误判成"没推过"
         let git = Git::new(ws.module_path(m)).with_hub_token(hub);
-        let _ = git.fetch();
+        // fetch 失败**必须说出来**：原来 `let _ =` 吞掉之后，`remote_branch_exists`
+        // 读的是过期引用，会得出「远程没有这条分支 / 没有落后」的错误结论。
+        if let Err(e) = git.fetch() {
+            let why = format!("拉取远程失败: {}", e.brief());
+            out.failed.push((m.clone(), why.clone()));
+            unreachable.insert(m.clone());
+            rep.fail(m.clone(), why);
+            continue;
+        }
         if !git.remote_branch_exists(&branch) {
             rep.ok(m.clone());
             continue;
@@ -429,6 +438,11 @@ pub fn push_with(
     // 第二遍：逐个推
     let mut rep = crate::progress::Reporter::start(cb, modules.len(), "推送需求分支");
     for m in &modules {
+        if unreachable.contains(m) {
+            // 上面已经把原因报过了，这里只占一步
+            rep.fail(m.clone(), "远程不可达");
+            continue;
+        }
         let git = Git::new(ws.module_path(m)).with_hub_token(hub);
         let dirty = git.dirty_count()?;
         if dirty > 0 {
@@ -442,8 +456,8 @@ pub fn push_with(
                 rep.ok(m.clone());
             }
             Err(e) => {
-                out.failed.push((m.clone(), e.to_string()));
-                rep.fail(m.clone(), e.to_string());
+                out.failed.push((m.clone(), e.brief()));
+                rep.fail(m.clone(), e.brief());
             }
         }
     }
@@ -588,7 +602,14 @@ pub fn pull_with(
 
     for m in &modules {
         let git = Git::new(ws.module_path(m)).with_hub_token(hub);
-        let _ = git.fetch();
+        // 同上：fetch 失败不能当成「远程没有这条分支」，否则会报出一个
+        // 完全正确但不是原因的结论（远程无 xxx），真正的问题（凭据/网络）被藏掉。
+        if let Err(e) = git.fetch() {
+            let why = format!("拉取远程失败: {}", e.brief());
+            out.skipped.push((m.clone(), why.clone()));
+            rep.fail(m.clone(), why);
+            continue;
+        }
 
         if !git.remote_branch_exists(&branch) {
             out.skipped.push((m.clone(), format!("远程无 {branch}")));
@@ -693,8 +714,15 @@ pub fn sync_main_with(
 
     for m in &modules {
         let wt = ws.module_path(m);
-        let git = Git::new(&wt);
-        let _ = git.fetch();
+        let git = Git::new(&wt).with_hub_token(hub);
+        // 与 push/pull 同理：拿不到远程最新提交就没法判断基线在哪儿，
+        // 闷着合会合进过期内容。这里当场说清原因。
+        if let Err(e) = git.fetch() {
+            let why = format!("拉取远程失败: {}", e.brief());
+            out.blocked.push((m.clone(), why.clone()));
+            rep.fail(m.clone(), why);
+            continue;
+        }
 
         let res = resolve_base(hub, m, &chain)?;
         let mut src = res.reference.clone();
@@ -746,13 +774,54 @@ pub fn sync_main_with(
 
 // ══ merge：需求 → 环境分支 ══════════════════════════════════════════════
 
+/// 一个模块「本轮没有（完整）合并」的原因。
+///
+/// **几种 pending 的含义完全不同，渲染层不能一律说「已合并」**（实测反馈：
+/// 远程环境分支被重建后，界面说「已合并到本地」，实际本地 HEAD 一动没动，
+/// 按提示去推送还会失败）。分开建模，界面才有依据说清楚发生了什么。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PendingReason {
+    /// 需求分支本地有未推送提交：合入的是 `origin/<需求分支>`，
+    /// 这些新提交**没包含在本次合并里**。合并本身发生了，但内容不全。
+    RequirementUnpushed { ahead: u64 },
+    /// 环境分支本地已有之前合好的未推送成果，远程没有新提交：本轮跳过，
+    /// 没重新合并。成果仍有效，确认后 `--push` 即可。
+    EnvAhead { ahead: u64 },
+    /// 远程环境分支被**回退**过（force push 回老提交），但回退到的位置正好是
+    /// 本地历史的祖先：`ahead/behind` 看起来只是「本地领先」，普通快进推送
+    /// 却会把本地副本里**回退前的提交（可能含他人已合入的内容）一并恢复**。
+    /// 因此必须和分叉一样显式 `--force` 重新对齐，才只推本次需求。
+    EnvRolledBack { ahead: u64 },
+    /// 环境分支本地与远程**分叉**（远程前进或 force push 重建过）：本轮完全
+    /// 没合并，必须显式 `--force` 才能以远程为准重新对齐。`rebuilt` 区分
+    /// 「远程被重建」（本地副本已作废）和「远程正常前进」。
+    EnvDiverged { ahead: u64, behind: u64, rebuilt: bool },
+}
+
+impl PendingReason {
+    pub fn is_diverged(&self) -> bool {
+        matches!(self, Self::EnvDiverged { .. })
+    }
+
+    /// 这个模块**必须显式 `--force` 先与远程对齐**，普通 `--push` 不能碰。
+    ///
+    /// 分叉自不必说；回退也有同样的问题——它是快进，推得上去，但推的是
+    /// 一整段作废的历史（可能把同事已被回退的提交重新带回来）。
+    pub fn needs_force(&self) -> bool {
+        matches!(self, Self::EnvDiverged { .. } | Self::EnvRolledBack { .. })
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct MergeOutcome {
     pub env: String,
+    /// 需求分支名。文案里要报「合入的是 origin/<需求分支>」（不能拿别的名字代）。
+    pub req_branch: String,
     /// 远程环境分支被重建（force push）过，本地副本已作废并重新合并。
     pub stale: Vec<String>,
-    /// 本地已有未推送的合并成果，本次未动它们。
-    pub pending: Vec<(String, u64)>,
+    /// 本轮没有（完整）合并的模块与原因。见 [`PendingReason`]。
+    pub pending: Vec<(String, PendingReason)>,
     pub clean: Vec<String>,
     pub skipped: Vec<(String, String)>,
     pub conflicts: Vec<String>,
@@ -777,6 +846,18 @@ pub struct MergeOutcome {
 impl MergeOutcome {
     pub fn has_conflicts(&self) -> bool {
         !self.conflicts.is_empty()
+    }
+
+    /// 有模块必须先 `--force` 重新对齐（分叉或远程被回退），本轮完全没合并。
+    ///
+    /// 这不算成功：CLI 用它决定退出码，脚本调用时才不会把「什么都没合」当成通过了。
+    pub fn needs_force(&self) -> bool {
+        self.pending.iter().any(|(_, r)| r.needs_force())
+    }
+
+    /// 本轮**真的合进了东西**的模块数（冲突现场不算）。
+    pub fn merged_count(&self) -> usize {
+        self.clean.len()
     }
 }
 
@@ -817,7 +898,8 @@ pub fn merge_with(
     let envs_dir = hub.env_dir(env_id);
     std::fs::create_dir_all(&envs_dir).map_err(|e| Error::io(envs_dir.clone(), e))?;
 
-    let mut out = MergeOutcome { env: env_id.to_string(), ..Default::default() };
+    let mut out =
+        MergeOutcome { env: env_id.to_string(), req_branch: branch.clone(), ..Default::default() };
 
     // ── 前置闸门：需求分支落后远程时先停下 ────────────────────────────
     // 协作场景：其他人已推送新提交，此时直接合入环境分支会用旧代码覆盖其成果。
@@ -861,7 +943,9 @@ pub fn merge_with(
              先同步再合并: gws pull → gws push → gws merge {env_id}"
         )));
     }
-    out.pending.extend(unpushed);
+    // 需求分支有未推送提交的模块先记下来，**等合完再决定怎么报**：
+    // 只有真的合进去了，才能说「本次合入的是已推送部分、另有 N 个没含在内」；
+    // 没合进去的模块由环境侧原因（分叉 / 冲突 / 跳过）解释，说「已合入」就是误报。
 
     // ── 逐模块处理 ────────────────────────────────────────────────────
     let mut rep = crate::progress::Reporter::start(
@@ -967,9 +1051,13 @@ pub fn merge_with(
                     .previous_ref(&remote_env)
                     .map(|prev| !gwt.is_ancestor(&prev, &remote_env))
                     .unwrap_or(false);
-                out.pending.push((m.clone(), ahead));
+                out.branches.insert(m.clone(), env_branch.clone());
+                out.pending.push((
+                    m.clone(),
+                    PendingReason::EnvDiverged { ahead, behind, rebuilt },
+                ));
                 rep.ok(format!(
-                    "{m}（{}，本地另有 {ahead} 个未推送提交；未动）",
+                    "{m}（{}，本地另有 {ahead} 个未推送提交；未合并）",
                     if rebuilt {
                         format!("环境分支在远程被重建过（远程 {behind} 个新提交）")
                     } else {
@@ -993,8 +1081,24 @@ pub fn merge_with(
                 gwt.reset_hard(&remote_env)?;
                 let _ = gwt.clean_untracked(CLEAN_KEEP);
             } else {
-                out.pending.push((m.clone(), ahead));
-                rep.ok(format!("{m}（已有 {ahead} 个未推送提交，未动）"));
+                // 远程被强制回退时，回退点常常正好是本地历史的祖先：ahead/behind
+                // 看起来和「本地还没推」完全一样，但普通快进推送会把回退前那一整段
+                // 历史（包括同事已被回退的提交）重新推回去。用 reflog 看远程是否
+                // **往回**走过（当前远程位置是上一次位置的祖先且不等于它）。
+                let rolled_back = match (gwt.previous_ref(&remote_env), gwt.sha(&remote_env).ok()) {
+                    (Some(prev), Some(cur)) => {
+                        prev != cur && gwt.is_ancestor(&remote_env, &prev)
+                    }
+                    _ => false,
+                };
+                out.branches.insert(m.clone(), env_branch.clone());
+                if rolled_back {
+                    out.pending.push((m.clone(), PendingReason::EnvRolledBack { ahead }));
+                    rep.ok(format!("{m}（远程被回退过，本地另有 {ahead} 个提交；未合并）"));
+                } else {
+                    out.pending.push((m.clone(), PendingReason::EnvAhead { ahead }));
+                    rep.ok(format!("{m}（已有 {ahead} 个未推送提交，未动）"));
+                }
                 continue;
             }
         }
@@ -1023,11 +1127,26 @@ pub fn merge_with(
     }
     rep.finish();
 
+    // 只有**本轮真的合进去了**的模块才报「另有未推送提交没含在内」。
+    // 没合进去的说这句话，正是本 BUG 的误报来源（实测：说「已合并」，HEAD 没动）。
+    for (m, a) in unpushed {
+        if out.clean.iter().any(|c| c == &m) {
+            out.pending.push((m, PendingReason::RequirementUnpushed { ahead: a }));
+        }
+    }
+
     // ── 推送决策：默认只合到本地，绝不自动推 ──────────────────────────
     if push_after && !out.has_conflicts() {
         let mut all: Vec<String> = out.pending.iter().map(|(m, _)| m.clone()).collect();
         all.extend(out.clean.iter().cloned());
         all.retain(|m| !out.skipped.iter().any(|(s, _)| s == m));
+        // 分叉的模块按普通 push 一定非快进失败，别让它变成一条英文报错 ——
+        // 它们需要的是 --force 重新合并（见上方的 pending 提示）。
+        all.retain(|m| {
+            !out.pending
+                .iter()
+                .any(|(p, r)| p == m && r.needs_force())
+        });
         all.sort();
         all.dedup();
 
@@ -1046,8 +1165,8 @@ pub fn merge_with(
                         rep.ok(format!("{m} → origin/{env_branch}"));
                     }
                     Err(e) => {
-                        out.push_failed.push((m.clone(), e.to_string()));
-                        rep.fail(m.clone(), e.to_string());
+                        out.push_failed.push((m.clone(), e.brief()));
+                        rep.fail(m.clone(), e.brief());
                     }
                 }
             }
@@ -1081,8 +1200,7 @@ pub struct SyncOutcome {
 /// 逐模块报出**前进/后退了几个提交**：只数单向的话，远程被删库重建或强推回退时
 /// 会算出 0，等于把「提交被抹掉了」这件事藏起来。
 pub fn sync_all(hub: &Hub, cb: crate::progress::Progress<'_>) -> Result<SyncOutcome> {
-    sync_repos(hub, &ModuleFilter::all(), cb)?;
-    let mut out = sync_repos(hub, &ModuleFilter::all(), None)?;
+    let mut out = sync_repos(hub, &ModuleFilter::all(), cb)?;
     let envs = hub.config().envs.clone();
     for e in &envs {
         let one = sync_env(hub, &e.id, &ModuleFilter::all(), None)?;
@@ -1116,24 +1234,34 @@ pub fn sync_repos(
 
     // ── repos/：reset 到主干 ──────────────────────────────────────────
     for repo in &repos {
-        let git = repo.git();
+        let git = repo.git().with_hub_token(hub);
         let main = match repo.main_branch() {
             Ok(m) => m,
             Err(e) => {
-                rep.fail(format!("repos/{}", repo.name), "探测主干失败");
-                out.repo_failures.push((repo.name.clone(), e.to_string()));
+                rep.fail(format!("repos/{}", repo.name), e.brief());
+                out.repo_failures.push((repo.name.clone(), e.brief()));
                 continue;
             }
         };
         if let Err(e) = git.fetch() {
-            rep.fail(format!("repos/{}", repo.name), "fetch 失败");
-            out.repo_failures.push((repo.name.clone(), e.to_string()));
+            rep.fail(format!("repos/{}", repo.name), e.brief());
+            out.repo_failures.push((repo.name.clone(), e.brief()));
             continue;
         }
-        if git.is_dirty()? {
-            rep.ok(format!("repos/{}（有未提交改动，跳过）", repo.name));
-            out.repo_failures.push((repo.name.clone(), "有未提交改动，跳过".into()));
-            continue;
+        // 脏工作树不能 `reset --hard`（会抹掉改动），但也不能因此中断整轮同步：
+        // 原来 `git.is_dirty()?` 一报错整批仓库全不处理，且没有任何说明。
+        match git.is_dirty() {
+            Ok(true) => {
+                rep.ok(format!("repos/{}（有未提交改动，跳过）", repo.name));
+                out.repo_failures.push((repo.name.clone(), "有未提交改动，跳过".into()));
+                continue;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                rep.fail(format!("repos/{}", repo.name), e.brief());
+                out.repo_failures.push((repo.name.clone(), e.brief()));
+                continue;
+            }
         }
         match git.reset_hard(&format!("origin/{main}")) {
             Ok(()) => {
@@ -1141,8 +1269,8 @@ pub fn sync_repos(
                 out.repos_updated.push(repo.name.clone());
             }
             Err(e) => {
-                rep.fail(format!("repos/{}", repo.name), e.to_string());
-                out.repo_failures.push((repo.name.clone(), e.to_string()));
+                rep.fail(format!("repos/{}", repo.name), e.brief());
+                out.repo_failures.push((repo.name.clone(), e.brief()));
             }
         }
     }
@@ -1219,7 +1347,23 @@ fn env_worktrees(
 
     for repo in &repos {
         let branch = env.branch_for(&repo.name).to_string();
-        if !repo.git().remote_branch_exists(&branch) {
+        let git = repo.git().with_hub_token(hub);
+        // **同步模式每次都要 fetch**：环境要 reset 到远程最新，不 fetch 就只会
+        // reset 到本地上次见到的位置，界面上说「已同步」其实没跟上。
+        //
+        // 补建模式只在「本地根本没有这条远程引用」时 fetch 一次 —— 刚 clone 出来
+        // 的仓库引用已经齐了，每个环境再各打一次网络纯属白等；而真缺引用时
+        // 不 fetch 又会把「还没 fetch 过」误报成「远程没有这个分支」。
+        let need_fetch = reset_existing || !git.remote_branch_exists(&branch);
+        if need_fetch {
+            if let Err(e) = git.fetch() {
+                let why = format!("拉取远程失败: {}", e.brief());
+                rep.fail(repo.name.clone(), why.clone());
+                out.env_failures.push((format!("{}/{}", env.id, repo.name), why));
+                continue;
+            }
+        }
+        if !git.remote_branch_exists(&branch) {
             // 不是每个仓库都参与每个环境，跳过是正常的；但也计一步，进度条才走得满
             rep.ok(format!("{}（无此分支，跳过）", repo.name));
             continue;
@@ -1227,16 +1371,16 @@ fn env_worktrees(
         let wt = env_dir.join(&repo.name);
 
         if !wt.exists() {
-            let created = if repo.git().local_branch_exists(&branch) {
-                repo.git().worktree_add(&wt, &branch, false, None)
+            let created = if git.local_branch_exists(&branch) {
+                git.worktree_add(&wt, &branch, false, None)
             } else {
-                repo.git().worktree_add(&wt, &branch, true, Some(&format!("origin/{branch}")))
+                git.worktree_add(&wt, &branch, true, Some(&format!("origin/{branch}")))
             };
             if let Err(e) = created {
-                rep.fail(repo.name.clone(), "worktree 创建失败");
+                rep.fail(repo.name.clone(), e.brief());
                 out.env_failures.push((
                     format!("{}/{}", env.id, repo.name),
-                    format!("worktree 创建失败: {e}"),
+                    format!("worktree 创建失败: {}", e.brief()),
                 ));
                 continue;
             }
@@ -1257,10 +1401,10 @@ fn env_worktrees(
         if !cur.is_empty() && cur != branch {
             rep.ok(format!("{}（检出在 {cur}，切回 {branch}）", repo.name));
             if let Err(e) = gwt.checkout_switch(&branch, &format!("origin/{branch}")) {
-                rep.fail(repo.name.clone(), "切换分支失败");
+                rep.fail(repo.name.clone(), e.brief());
                 out.env_failures.push((
                     format!("{}/{}", env.id, repo.name),
-                    format!("检出在 {cur} 而不是 {branch}，且切换失败: {e}"),
+                    format!("检出在 {cur} 而不是 {branch}，且切换失败: {}", e.brief()),
                 ));
                 continue;
             }
@@ -1268,8 +1412,8 @@ fn env_worktrees(
         let target = format!("origin/{branch}");
         let before = gwt.sha("HEAD").ok();
         if let Err(e) = gwt.reset_hard(&target) {
-            rep.fail(repo.name.clone(), "reset 失败");
-            out.env_failures.push((format!("{}/{}", env.id, repo.name), e.to_string()));
+            rep.fail(repo.name.clone(), e.brief());
+            out.env_failures.push((format!("{}/{}", env.id, repo.name), e.brief()));
             continue;
         }
         let after = gwt.sha("HEAD").ok();

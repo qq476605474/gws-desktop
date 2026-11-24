@@ -841,6 +841,10 @@ async function clearToken() {
 }
 .actions {
   margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 /* 同步 / 更新结果与按钮拉开距离，否则提示条贴着按钮 */
 .mt {

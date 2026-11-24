@@ -108,6 +108,7 @@ pub fn run() {
             commands::mr::mr_plan,
             commands::mr::mr_create,
             commands::mr::mr_close,
+            commands::mr::mr_links,
             commands::mr::mr_reviewers,
             commands::mr::mr_save_reviewers,
             // Paseo（在 hub 根目录开 AI 会话）

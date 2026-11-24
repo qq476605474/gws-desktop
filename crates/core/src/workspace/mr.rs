@@ -666,6 +666,108 @@ pub struct CloseOutcome {
     pub failed: Vec<(String, String)>,
 }
 
+// ══ 只生成「对比代码」链接（不创建 MR） ═══════════════════════════════
+//
+// 实测反馈：有时只是想拿 GitLab 自带的对比工具逐个看一遍改动，**并不想提 MR**。
+// 提 MR 会建出一堆需要人处理的对象，还得再关掉。所以单独给一条只产出链接的路：
+// 不联网、不需要 token、不写任何东西。
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CompareRow {
+    pub module: String,
+    /// GitLab 项目路径（`group/name`）。
+    pub project: String,
+    pub target_branch: String,
+    pub source_branch: String,
+    pub url: String,
+    /// 提醒（分支没推送 / 有未推送提交），不影响链接本身。
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct CompareOutcome {
+    pub source_branch: String,
+    pub rows: Vec<CompareRow>,
+    pub skipped: Vec<(String, String)>,
+}
+
+/// 批量生成 `主干 ... 需求分支` 的 GitLab 对比页链接。
+///
+/// **纯本地信息**：项目路径取自各仓库 `origin`，主干名逐个探测，分支名取工作区。
+/// 因此不需要 GitLab token，也不受网络影响 —— 没推送的分支也会给链接，
+/// 只是在 `note` 里说明「推送后才打得开」。
+pub fn compare_links(
+    hub: &Hub,
+    ws: &Workspace,
+    filter: &ModuleFilter,
+) -> Result<CompareOutcome> {
+    let branch = ws.branch().to_string();
+    let modules = selected_modules(ws, filter, &hub.dochub_name())?;
+    let mut out = CompareOutcome {
+        source_branch: branch.clone(),
+        ..Default::default()
+    };
+    let base = hub.config().gitlab.base_url.trim_end_matches('/').to_string();
+
+    for module in &modules {
+        let Some((project, _group)) = project_path(hub, module) else {
+            out.skipped.push((module.clone(), "无 origin 远程".into()));
+            continue;
+        };
+        let repo = Repo::open(hub, module)?;
+        let target = match repo.main_branch() {
+            Ok(t) => t,
+            Err(e) => {
+                out.skipped.push((module.clone(), e.brief()));
+                continue;
+            }
+        };
+        let git = crate::git::Git::new(ws.module_path(module));
+        let note = if !git.remote_branch_exists(&branch) {
+            Some("分支还没推送：链接要推送后才打得开".to_string())
+        } else if git.count_range(&format!("origin/{branch}..HEAD")).unwrap_or(0) > 0 {
+            Some("有未推送的提交：对比页里看不到它们".to_string())
+        } else {
+            None
+        };
+        out.rows.push(CompareRow {
+            module: module.clone(),
+            project: project.clone(),
+            target_branch: target.clone(),
+            source_branch: branch.clone(),
+            url: compare_url(&base, &project, &target, &branch),
+            note,
+        });
+    }
+
+    Ok(out)
+}
+
+/// GitLab 对比页：`<host>/<group>/<name>/-/compare/<from>...<to>`。
+pub fn compare_url(base_url: &str, project: &str, from: &str, to: &str) -> String {
+    format!(
+        "{}/{}/-/compare/{}...{}",
+        base_url.trim_end_matches('/'),
+        project.trim_matches('/'),
+        encode_ref(from),
+        encode_ref(to)
+    )
+}
+
+/// 分支名要转义：`feature/xxx` 里的 `/` 直接放在路径里会被 GitLab 当成层级。
+fn encode_ref(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        let keep = b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~');
+        if keep {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
 // ══ 辅助 ═══════════════════════════════════════════════════════════════
 
 /// 模块 → `(GitLab 项目路径 group/name, group)`。
@@ -916,5 +1018,22 @@ mod tests {
         let r = resolve_reviewers(None, &over);
         assert_eq!(r.backend, "", "空白不该被当成评审人");
         assert_eq!(r.source, "未指定");
+    }
+
+    #[test]
+    fn compare_url_keeps_host_and_encodes_branch_slashes() {
+        let url = compare_url(
+            "https://git.example.com",
+            "group/demo-api",
+            "main",
+            "feature-20260101-demo",
+        );
+        assert_eq!(
+            url,
+            "https://git.example.com/group/demo-api/-/compare/main...feature-20260101-demo"
+        );
+        // 分支名里的 `/` 必须转义，否则 GitLab 会把它当成路径层级
+        let url = compare_url("https://git.example.com", "a/b", "master", "feature/x");
+        assert!(url.ends_with("/-/compare/master...feature%2Fx"), "{url}");
     }
 }

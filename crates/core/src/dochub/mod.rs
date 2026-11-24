@@ -498,31 +498,6 @@ fn is_scaffold_or_junk(name: &str) -> bool {
     ) || name.starts_with("._")
 }
 
-/// 某个分支上的期次目录里有没有正文（不看工作树）。
-fn rev_period_has_content(git: &Git, rev: &str, family: &str, branch: &str) -> bool {
-    let prefix = format!("{WORKSPACES_DIR}/{family}/{branch}/");
-    let Ok(out) = git.out(&[
-        "-c",
-        "core.quotePath=false",
-        "ls-tree",
-        "-r",
-        "--name-only",
-        rev,
-        "--",
-        &prefix,
-    ]) else {
-        // 读不出来时宁可显示，也不要误藏用户的文档
-        return true;
-    };
-    out.lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .any(|line| {
-            let name = line.rsplit('/').next().unwrap_or(line);
-            !is_scaffold_or_junk(name)
-        })
-}
-
 /// 在这个文档 worktree 里找**属于本分支的那一期** —— **不限于哪个分类**。
 ///
 /// # 为什么要"不限于分类"
@@ -762,17 +737,74 @@ impl DocHub {
             }
         }
 
-        // ② + ③ 各分支上**已提交**的内容（其他人建的、已推上来的期次）
-        for rev in self.all_revs(&git) {
-            for path in meta_paths_in(&git, &rev).unwrap_or_default() {
-                let Ok(text) = git.out(&["show", &format!("{rev}:{path}")]) else {
+        // ② + ③ 各分支上**已提交**的内容（同事建的、已推上来的期次）
+        //
+        // 这里的开销必须控住：
+        // - 每个 ref 各扫一遍树 → 先**按提交去重**，指向同一提交的分支只读一次；
+        // - 每个 meta.json 各跑一次 `git show` → 改成一次 `git cat-file --batch`。
+        // 文档页打开慢，主要就慢在原来这几十上百个 git 子进程上。
+        let mut specs: Vec<String> = Vec::new();
+        // 与 `specs` 同序：这条 meta.json 路径所属的 (族, 分支)
+        let mut spec_keys: Vec<(String, String)> = Vec::new();
+        // 这一版树里 (族, 分支) 有没有正文
+        let mut has_content: std::collections::BTreeMap<(String, String), bool> =
+            std::collections::BTreeMap::new();
+
+        let oids = self.rev_oids(&git);
+        for (oid, listing) in oids.iter().zip(ls_tree_parallel(&self.root, &oids)) {
+            let Some(listing) = listing else {
+                continue;
+            };
+            for line in listing.lines() {
+                let path = line.trim();
+                // workspaces/<族>/<分支>/<其余…>
+                let mut it = path.splitn(4, '/');
+                let (Some(_root), Some(family), Some(branch), Some(rest)) =
+                    (it.next(), it.next(), it.next(), it.next())
+                else {
                     continue;
                 };
-                if let Ok(m) = serde_json::from_str::<PeriodMeta>(&text) {
-                    let has_content = rev_period_has_content(&git, &rev, &m.family, &m.branch);
-                    merge_period(&mut all, &mut seen, m, has_content);
+                if family.is_empty() || branch.is_empty() {
+                    continue;
+                }
+                let key = (family.to_string(), branch.to_string());
+                if rest == META_FILE {
+                    specs.push(format!("{oid}:{path}"));
+                    spec_keys.push(key);
+                } else {
+                    // `rest` 可能还带子目录，只看文件名
+                    let name = rest.rsplit('/').next().unwrap_or(rest);
+                    if !is_scaffold_or_junk(name) {
+                        has_content.insert(key, true);
+                    }
                 }
             }
+        }
+
+        let blobs = match git.cat_batch(&specs) {
+            Ok(b) => b,
+            // 批量读失败时退回逐个读：宁可慢一次，也不能把文档列表变成空的
+            Err(_) => specs
+                .iter()
+                .map(|s| git.out(&["show", s]).ok())
+                .collect(),
+        };
+        for (i, blob) in blobs.into_iter().enumerate() {
+            let Some(text) = blob else { continue };
+            let Ok(m) = serde_json::from_str::<PeriodMeta>(&text) else {
+                continue;
+            };
+            let path_key = &spec_keys[i];
+            let content = has_content
+                .get(path_key)
+                .copied()
+                .or_else(|| {
+                    has_content
+                        .get(&(m.family.clone(), m.branch.clone()))
+                        .copied()
+                })
+                .unwrap_or(false);
+            merge_period(&mut all, &mut seen, m, content);
         }
 
         // 标出哪些期次已经并入主干 —— 界面据此区分「已归档的历史文档」
@@ -902,22 +934,30 @@ impl DocHub {
             .unwrap_or_default()
     }
 
-    /// doc-hub 里所有值得扫的分支：本地 + 远程（去掉 `origin/HEAD` 这类符号引用）。
-    fn all_revs(&self, git: &Git) -> Vec<String> {
+    /// doc-hub 里所有值得扫的提交：本地 + 远程，**按提交哈希去重**。
+    ///
+    /// 多个分支指向同一个提交是常态（同一期在本地和 `origin/` 各一份，
+    /// `origin/HEAD` 又和 `origin/main` 同源）。按 ref 逐条扫等于把同一棵树
+    /// 读好几遍 —— 文档页打开慢就有它的一份。
+    fn rev_oids(&self, git: &Git) -> Vec<String> {
         git.out(&[
             "for-each-ref",
-            "--format=%(refname:short)",
+            "--format=%(objectname)",
             "refs/heads",
             "refs/remotes/origin",
         ])
-            .map(|s| {
-                s.lines()
-                    .map(str::trim)
-                    .filter(|l| !l.is_empty() && !l.ends_with("/HEAD"))
-                    .map(str::to_string)
-                    .collect()
-            })
-            .unwrap_or_default()
+        .map(|s| {
+            let mut v: Vec<String> = s
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        })
+        .unwrap_or_default()
     }
 
 /// 没填需求分类时，新建的族目录叫**年月**（`2026-10`）。
@@ -1552,18 +1592,49 @@ fn merge_period(
     }
 }
 
-/// 某个 rev 上所有期次元数据的路径。
+/// 并发地对一批提交各跑一次 `git ls-tree -r --name-only <oid> -- workspaces`。
 ///
-/// 期次目录固定是 `workspaces/<族>/<期次>/meta.json` —— 恰好四段。
-/// 按段数过滤可以避免把族级别的其它 json 也扫进来。
-fn meta_paths_in(git: &Git, rev: &str) -> Result<Vec<String>> {
-    Ok(git
-        .out(&["ls-tree", "-r", "--name-only", rev, "--", WORKSPACES_DIR])?
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.ends_with(META_FILE) && l.split('/').count() == 4)
-        .map(str::to_string)
-        .collect())
+/// # 为什么要并发
+///
+/// 主要开销是**进程启动**：串行跑 40 个要 250ms 左右，文档页打开前那一下
+/// 观感就慢在这里。`ls-tree` 是只读的，同一仓库上并发跑完全安全。
+///
+/// 返回与 `oids` **同序**：读不出来的位置为 `None`（不让一个坏 ref 拖垮整张列表）。
+fn ls_tree_parallel(root: &Path, oids: &[String]) -> Vec<Option<String>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    if oids.is_empty() {
+        return Vec::new();
+    }
+    let slots: Vec<Mutex<Option<String>>> = oids.iter().map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    let threads = oids.len().min(8);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| loop {
+                let i = next.fetch_add(1, Ordering::Relaxed);
+                if i >= oids.len() {
+                    break;
+                }
+                let git = Git::new(root);
+                if let Ok(s) = git.out(&[
+                    "ls-tree",
+                    "-r",
+                    "--name-only",
+                    &oids[i],
+                    "--",
+                    WORKSPACES_DIR,
+                ]) {
+                    *slots[i].lock().unwrap() = Some(s);
+                }
+            });
+        }
+    });
+    slots
+        .into_iter()
+        .map(|m| m.into_inner().unwrap())
+        .collect()
 }
 
 #[cfg(test)]

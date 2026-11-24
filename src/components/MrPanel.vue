@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { useCopy } from "../lib/copy";
-import { computed, onMounted, ref, watch } from "vue";
-import { NAlert, NButton, NCard, NInput, NSelect, NTag, useDialog, useMessage } from "naive-ui";
+import { computed, h, onMounted, ref, watch } from "vue";
+import { NAlert, NButton, NCard, NDataTable, NInput, NSelect, NTag, useDialog, useMessage } from "naive-ui";
+import type { DataTableColumns } from "naive-ui";
 
 import * as api from "../bridge";
 import { openUrl } from "../bridge";
 import * as fmt from "../format";
 import { NO_AUTO } from "../lib/inputs";
 import ModulePicker from "./ModulePicker.vue";
-import type { GitlabStatus, MergeRequest, ModuleStatus, MrPlan, MrRow, ReviewerInfo } from "../types";
+import type { CompareRow, GitlabStatus, MergeRequest, ModuleStatus, MrPlan, MrRow, ReviewerInfo } from "../types";
 
 const props = defineProps<{ branch: string; modules: ModuleStatus[] }>();
 const emit = defineEmits<{ (e: "changed"): void }>();
@@ -25,6 +26,7 @@ const frontDraft = ref("");
 const backDraft = ref("");
 const searching = ref(false);
 const creating = ref(false);
+const loadingLinks = ref(false);
 /**
  * 本次要提的模块。**默认全选**。
  *
@@ -183,6 +185,101 @@ async function preview() {
   }
 }
 
+/**
+ * 只生成 GitLab 对比页链接（**不创建 MR、不联网**）。
+ *
+ * 用途：有时只想点进去用 GitLab 自带的对比工具看差异，不想真提 MR。
+ * 出结果后**逐行给「打开」按钮**——这是给自己看的，不是拿去发给别人。
+ */
+async function makeLinks() {
+  if (loadingLinks.value) return;
+  loadingLinks.value = true;
+  try {
+    const out = await api.mrLinks(props.branch, { only: picked.value });
+    if (!out.rows.length) {
+      msg.warning("没有可生成对比链接的模块（分支可能还没推送）");
+      return;
+    }
+    const columns: DataTableColumns<CompareRow> = [
+      {
+        title: "模块",
+        key: "module",
+        width: 190,
+        ellipsis: { tooltip: true },
+        render: (r) => h("span", { class: "mono" }, r.module),
+      },
+      {
+        title: "对比（需求分支 → 主干）",
+        key: "target_branch",
+        ellipsis: { tooltip: true },
+        render: (r) => h("span", { class: "mono" }, `${r.source_branch} → ${r.target_branch}`),
+      },
+      {
+        title: "提醒",
+        key: "note",
+        width: 120,
+        render: (r) =>
+          r.note
+            ? h("span", { style: "color: #d03050; font-size: 12px;" }, r.note)
+            : "—",
+      },
+      {
+        title: "",
+        key: "open",
+        width: 92,
+        align: "right",
+        // 右侧留出滚动条的位置（macOS 是覆盖式滚动条，贴着右边缘会压住按钮）
+        render: (r) =>
+          h(
+            "div",
+            { style: "padding-right: 12px; display: flex; justify-content: flex-end;" },
+            h(
+              NButton,
+              { size: "tiny", type: "primary", onClick: () => void openUrl(r.url) },
+              { default: () => "打开" },
+            ),
+          ),
+      },
+    ];
+    const skipped = out.skipped.map(([m, why]) => `${m}：${why}`);
+    // 复制出来一行一个，粘到别处也认得清楚
+    const text = out.rows.map((r) => r.url).join("\n");
+    dialog.info({
+      title: `对比代码 · ${out.rows.length} 个模块`,
+      style: "width: 880px; max-width: calc(100vw - 32px)",
+      content: () =>
+        h("div", [
+          h(NDataTable, {
+            columns,
+            data: out.rows,
+            size: "small",
+            pagination: false,
+            maxHeight: 380,
+            bordered: false,
+          }),
+          skipped.length
+            ? h(
+                "p",
+                { style: "margin: 8px 0 0; font-size: 12px; color: #888;" },
+                `跳过：${skipped.join("；")}`,
+              )
+            : null,
+        ]),
+      positiveText: "关闭",
+      negativeText: "复制全部链接",
+      // 复制完**不关弹窗**：可能还要逐个点开看
+      onNegativeClick: async () => {
+        await copy(text, "对比链接");
+        return false;
+      },
+    });
+  } catch (e) {
+    msg.error(api.errText(e));
+  } finally {
+    loadingLinks.value = false;
+  }
+}
+
 async function searchUsers(q: string) {
   // 关键词清空 → **直接清空候选**，不要再去打一次接口。
   // 原来 `return` 会让上一次的结果留在列表里，看着像"搜出来一堆无关的人"；
@@ -338,6 +435,9 @@ function copyManifest() {
           @update:value="() => onReviewerChange('front')"
         />
         <div class="spacer" />
+        <NButton size="small" :loading="loadingLinks" :disabled="creating" @click="makeLinks">
+          对比链接
+        </NButton>
         <NButton size="small" :disabled="creating" @click="preview">
           {{ plan ? "重新预览" : "预览" }}
         </NButton>

@@ -7,8 +7,9 @@
 //! libgit2 在 `worktree`、`merge --autostash`、`branch --unset-upstream` 等边缘语义上
 //! 与 git 二进制存在偏差，而这些恰恰是本工具的核心依赖。详见设计方案 §1.1.1。
 
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Output};
+use std::process::{Command, ExitStatus, Output, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::{Error, Result};
@@ -95,7 +96,7 @@ impl Git {
         if !output.status.success() {
             return Err(Error::Git {
                 args: args.join(" "),
-                stderr: stderr_tail(&output.stderr),
+                stderr: stderr_summary(&output.stderr),
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout)
@@ -111,7 +112,7 @@ impl Git {
         } else {
             Err(Error::Git {
                 args: args.join(" "),
-                stderr: stderr_tail(&output.stderr),
+                stderr: stderr_summary(&output.stderr),
             })
         }
     }
@@ -187,7 +188,7 @@ impl Git {
         } else {
             Err(Error::Git {
                 args: args.join(" "),
-                stderr: stderr_tail(&output.stderr),
+                stderr: stderr_summary(&output.stderr),
             })
         }
     }
@@ -220,7 +221,7 @@ impl Git {
         } else {
             Err(Error::Git {
                 args: args.join(" "),
-                stderr: stderr_tail(&output.stderr),
+                stderr: stderr_summary(&output.stderr),
             })
         }
     }
@@ -750,6 +751,80 @@ impl Git {
         self.out(&["diff", "--shortstat", range])
     }
 
+    /// 一次 `git cat-file --batch` 读一批 `<rev>:<path>` 的内容。
+    ///
+    /// # 为什么要有
+    ///
+    /// 文档页列期次时，原来对每个分支上的每个 `meta.json` 各跑一次 `git show` ——
+    /// 分支一多就是几十上百个 git 进程，打开页面要等好几秒。这里把整批请求塞进
+    /// **一个**进程，进程启动一次就够。
+    ///
+    /// 返回与 `specs` **同序**的 `Option<String>`：不存在的路径/不是 blob 的位置为 `None`。
+    pub fn cat_batch(&self, specs: &[String]) -> Result<Vec<Option<String>>> {
+        if specs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut cmd = self.make_cmd(&["cat-file", "--batch"]);
+        cmd.stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = cmd.spawn().map_err(|e| {
+            Error::other(format!("无法执行 git（是否已安装并加入 PATH？）: {e}"))
+        })?;
+        {
+            let mut stdin = child
+                .stdin
+                .take()
+                .ok_or_else(|| Error::other("git cat-file: 拿不到标准输入".to_string()))?;
+            for spec in specs {
+                // 换行结尾；spec 里不会有换行（由 `rev:path` 拼成）
+                if let Err(e) = writeln!(stdin, "{spec}") {
+                    return Err(Error::other(format!("git cat-file 写入失败: {e}")));
+                }
+            }
+        } // stdin 在这里 drop → git 读到 EOF 后退出
+        let out = child
+            .wait_with_output()
+            .map_err(|e| Error::other(format!("git cat-file 执行失败: {e}")))?;
+
+        let buf = out.stdout;
+        let mut pos = 0usize;
+        let mut res = Vec::with_capacity(specs.len());
+        for _ in 0..specs.len() {
+            // 头：`<sha> <type> <size>` 或 `<spec> missing`
+            let Some(header) = take_line(&buf, &mut pos) else {
+                res.push(None);
+                continue;
+            };
+            if header.ends_with(" missing") {
+                res.push(None);
+                continue;
+            }
+            let Some(size) = header
+                .rsplit(' ')
+                .next()
+                .and_then(|s| s.parse::<usize>().ok())
+            else {
+                res.push(None);
+                continue;
+            };
+            // 元数据只有几百字节；这里只是防「万一指向了个巨型 blob」把内存吃掉
+            if size > 8 * 1024 * 1024 || pos + size > buf.len() {
+                res.push(None);
+                pos = buf.len();
+                continue;
+            }
+            let text = String::from_utf8_lossy(&buf[pos..pos + size]).to_string();
+            res.push(Some(text));
+            // 内容后面跟着一个换行
+            pos += size;
+            if buf.get(pos) == Some(&b'\n') {
+                pos += 1;
+            }
+        }
+        Ok(res)
+    }
+
     /// 有墙钟上限的执行（网络类命令用；见 [`NET_TIMEOUT`]）。
     fn capped(&self, args: &[&str], limit: Duration) -> Result<Output> {
         let mut cmd = self.make_cmd(args);
@@ -774,6 +849,11 @@ impl Git {
         // 收到唯一出口就不会再漏了 —— 需要原始转义行为的场景这里没有。
         cmd.args(COMMON_FLAGS);
         cmd.args(args);
+        // **永远别让 git 交互式要密码。** 本工具没有 tty：真去读用户名只会
+        // 得到 macOS 的 `could not read Username ...: Device not configured`
+        // （看起来像设备故障，实际是没人能输入）。关掉提示后报错变成
+        // `terminal prompts disabled`，并配合 token 注入，原因才说得清。
+        cmd.env("GIT_TERMINAL_PROMPT", "0");
         if let Some(token) = &self.auth {
             // GitLab：任意非空用户名 + PAT 作密码
             let basic = base64::Engine::encode(
@@ -889,6 +969,9 @@ pub fn clone_with_token(url: &str, dest: &Path, token: Option<&str>) -> Result<(
     cmd.current_dir(parent)
         .args(COMMON_FLAGS)
         .args(["clone", "--quiet", url, &dest_str]);
+    // 与 `Git::make_cmd` 同一条理由：没有 tty，别让 git 去问用户名密码，
+    // 否则 Windows/macOS 报的都是「设备/终端」层面的怪错，看不出是缺 token。
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
     if let Some(token) = token {
         let basic = base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
@@ -909,7 +992,7 @@ pub fn clone_with_token(url: &str, dest: &Path, token: Option<&str>) -> Result<(
     } else {
         Err(Error::Git {
             args: format!("clone {url} {dest_str}"),
-            stderr: stderr_tail(&output.stderr),
+            stderr: stderr_summary(&output.stderr),
         })
     }
 }
@@ -993,15 +1076,51 @@ pub fn detect_main_branch(repo_dir: &Path) -> Result<String> {
     )))
 }
 
-/// stderr 的最后一个非空行。git 的真实原因只在这里，不带上就只剩一个退出码。
-fn stderr_tail(bytes: &[u8]) -> String {
+/// 从 `buf[*pos..]` 读一行（到 `\n`），推进 `*pos`；EOF 时返回 `None`。
+fn take_line(buf: &[u8], pos: &mut usize) -> Option<String> {
+    let start = *pos;
+    let nl = buf.get(start..)?.iter().position(|&b| b == b'\n')? + start;
+    let line = String::from_utf8_lossy(&buf[start..nl]).to_string();
+    *pos = nl + 1;
+    Some(line)
+}
+
+/// 从 git 的 stderr 里挑出**真正的失败原因**。
+///
+/// 只取最后一个非空行时，多行诊断会被砍掉一半：典型的是
+/// `remote: HTTP Basic: Access denied` 后面才跟一句
+/// `fatal: Authentication failed ...`，而 Windows 的长路径失败是
+/// `Filename too long` + `fatal: Could not reset index file ...`。
+/// 只剩最后一行常常恰好是「结果」而不是「原因」。
+///
+/// 规则：优先保留 `fatal:` / `error:` / `remote:` 开头的行（最多 3 行、
+/// 去重），没有就取最后两行；用 ` | ` 连成一行，界面表格里不会被换行撑乱。
+fn stderr_summary(bytes: &[u8]) -> String {
     let text = String::from_utf8_lossy(bytes);
-    text.lines()
-        .rev()
+    let lines: Vec<&str> = text
+        .lines()
         .map(str::trim)
-        .find(|l| !l.is_empty())
-        .unwrap_or("")
-        .to_string()
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.is_empty() {
+        return String::new();
+    }
+    let mut picked: Vec<&str> = lines
+        .iter()
+        .copied()
+        .filter(|l| {
+            l.starts_with("fatal:")
+                || l.starts_with("error:")
+                || l.starts_with("remote:")
+        })
+        .collect();
+    if picked.is_empty() {
+        picked = lines[lines.len().saturating_sub(2)..].to_vec();
+    }
+    let mut seen = std::collections::HashSet::new();
+    picked.retain(|l| seen.insert(*l));
+    picked.truncate(3);
+    picked.join(" | ")
 }
 
 /// 删除前复核用的短超时（见 [`Git::fetch_quick`]）。
@@ -1139,19 +1258,78 @@ mod tests {
     use super::*;
 
     #[test]
-    fn stderr_tail_returns_last_non_empty_line() {
-        assert_eq!(stderr_tail(b"a\nb\n\n"), "b");
-        assert_eq!(stderr_tail(b"only"), "only");
-        assert_eq!(stderr_tail(b""), "");
-        assert_eq!(stderr_tail(b"\n\n"), "");
+    fn stderr_summary_keeps_the_real_reason_lines() {
+        // 只有一行时原样返回
+        assert_eq!(stderr_summary(b"only"), "only");
+        assert_eq!(stderr_summary(b""), "");
+        assert_eq!(stderr_summary(b"\n\n"), "");
+        // 没有人话标签时退化为最后两行
+        assert_eq!(stderr_summary(b"a\nb\nc\n"), "b | c");
+        // 有 fatal/remote 时优先保留原因，而不是结果
+        let err = b"remote: HTTP Basic: Access denied\n\
+                    warning: something\n\
+                    fatal: Authentication failed for 'https://git.example.com/x.git'\n";
+        assert_eq!(
+            stderr_summary(err),
+            "remote: HTTP Basic: Access denied | fatal: Authentication failed for 'https://git.example.com/x.git'"
+        );
+        // 重复行只留一次，最多三行
+        let dup = b"fatal: a\nfatal: a\nfatal: b\nfatal: c\nfatal: d\n";
+        assert_eq!(stderr_summary(dup), "fatal: a | fatal: b | fatal: c");
     }
 
     #[test]
-    fn stderr_tail_handles_invalid_utf8() {
+    fn stderr_summary_handles_invalid_utf8() {
         // git 在中文路径下可能吐出非 UTF-8 字节，不能因此 panic
-        assert_eq!(stderr_tail(b"\xff\xfe bad"), "\u{fffd}\u{fffd} bad");
+        assert_eq!(stderr_summary(b"\xff\xfe bad"), "\u{fffd}\u{fffd} bad");
     }
 }
+#[cfg(test)]
+mod cat_batch_tests {
+    use super::*;
+
+    fn commit_all(git: &Git, msg: &str) {
+        git.status(&["add", "-A"]).unwrap();
+        git.status(&[
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "-q",
+            "-m",
+            msg,
+        ])
+        .unwrap();
+    }
+
+    /// 批量读回来的内容必须**与请求同序**，缺失的位置是 `None`
+    /// —— 文档页靠这个顺序把 meta.json 对回各自的路径。
+    #[test]
+    fn reads_many_blobs_in_one_call_and_keeps_order() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let git = Git::new(dir.path());
+        git.status(&["init", "-q", "-b", "main"]).unwrap();
+        std::fs::write(dir.path().join("b.json"), "{\n  \"name\": \"第二\"\n}\n").unwrap();
+        std::fs::write(dir.path().join("a.json"), "{\"name\":\"第一\"}\n").unwrap();
+        commit_all(&git, "init");
+
+        assert!(git.cat_batch(&[]).unwrap().is_empty());
+
+        let got = git
+            .cat_batch(&[
+                "HEAD:a.json".to_string(),
+                "HEAD:nope.json".to_string(),
+                "HEAD:b.json".to_string(),
+            ])
+            .unwrap();
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].as_deref(), Some("{\"name\":\"第一\"}\n"));
+        assert_eq!(got[1], None);
+        assert_eq!(got[2].as_deref(), Some("{\n  \"name\": \"第二\"\n}\n"));
+    }
+}
+
 #[cfg(test)]
 mod quote_path_tests {
     use super::*;

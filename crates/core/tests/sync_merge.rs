@@ -11,7 +11,7 @@ use gws_core::env::EnvDef;
 use gws_core::hub::{Hub, InitOptions};
 use gws_core::repo;
 use gws_core::workspace::lifecycle::{self, NewOptions};
-use gws_core::workspace::sync;
+use gws_core::workspace::sync::{self, PendingReason};
 use gws_core::workspace::{ModuleFilter, Workspace};
 
 const MODULE: &str = "demo-web";
@@ -393,10 +393,15 @@ fn merge_preserves_unpushed_local_merge_results() {
 
     let out = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
 
-    // 领先 = 首次合并带来的提交 + 手工提交
+    // 领先 = 首次合并带来的提交 + 手工提交。远程没动 → 属于「本地已有成果」，
+    // 不是分叉：文案要能说「本轮未重新合并」，而不是「已合并」。
     assert_eq!(out.pending.len(), 1, "{out:?}");
     assert_eq!(out.pending[0].0, MODULE);
-    assert!(out.pending[0].1 > 0);
+    match out.pending[0].1 {
+        PendingReason::EnvAhead { ahead } => assert!(ahead > 0, "{out:?}"),
+        ref other => panic!("远程没前进时应为 EnvAhead，实际 {other:?}"),
+    }
+    assert!(!out.needs_force(), "远程没动不是分叉: {out:?}");
     assert!(out.clean.is_empty(), "不应重合，否则会丢掉手工作品");
     assert!(f.env_wt("dev").join("manual.txt").is_file(), "手工作品必须还在");
 }
@@ -486,10 +491,123 @@ fn merge_keeps_a_resolved_but_unpushed_conflict_when_remote_env_advances() {
 
     assert!(out.conflicts.is_empty(), "已解完不应再报冲突: {out:?}");
     assert_eq!(out.pending.len(), 1, "解完的合并成果应保留并待推: {out:?}");
+    match out.pending[0].1 {
+        PendingReason::EnvDiverged { ahead, behind, rebuilt } => {
+            assert!(ahead > 0, "{out:?}");
+            assert!(behind > 0, "远程前进过: {out:?}");
+            assert!(!rebuilt, "远程只是前进，不是被重建: {out:?}");
+        }
+        ref other => panic!("远程前进且本地有成果时应为 EnvDiverged，实际 {other:?}"),
+    }
     assert_eq!(
         std::fs::read_to_string(wt.join("same.txt")).unwrap(),
         "resolved\n",
         "解好的内容不能被重置掉"
+    );
+}
+
+#[test]
+fn merge_reports_diverged_without_force_and_does_not_merge_anything() {
+    // 实测 BUG（2026-11-23）：远程 dev 被 force 重建后，本地 dev 与远程分叉。
+    // 未加 --force 时核心层直接跳过（有意的保护），但结果里只有一句
+    // 「已合并到本地」，本地 HEAD 其实一动没动，按提示去推还会非快进失败。
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    commit_file(&f.wt("feature-x"), "feat.txt", "1", "feature work");
+    sync::push(&f.hub, &ws, &ModuleFilter::all()).unwrap();
+
+    // 先合一次并推送：远程 dev 上就有了这次合并的提交
+    sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), true, false).unwrap();
+
+    // 远程 dev 被 force 重建：主干前进后把 dev 直接指过去（之前的合并提交被抹掉）
+    f.colleague_pushes("main", "trunk.txt", "trunk moved");
+    git(&f.origin, &["update-ref", "refs/heads/dev", "refs/heads/main"]);
+
+    let before = git(&f.env_wt("dev"), &["rev-parse", "HEAD"]);
+    let out = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
+    assert!(out.clean.is_empty(), "分叉时绝不能报「合并成功」: {out:?}");
+    assert!(out.pending.len() == 1, "{out:?}");
+    match out.pending[0].1 {
+        PendingReason::EnvDiverged { ahead, behind, rebuilt } => {
+            assert!(ahead > 0, "{out:?}");
+            assert!(behind > 0, "{out:?}");
+            assert!(rebuilt, "应识别出远程被重建: {out:?}");
+        }
+        ref other => panic!("应为 EnvDiverged，实际 {other:?}"),
+    }
+    assert!(out.needs_force(), "脚本要能据此判失败: {out:?}");
+    assert_eq!(
+        git(&f.env_wt("dev"), &["rev-parse", "HEAD"]),
+        before,
+        "未加 --force 时本地 HEAD 不应变化"
+    );
+    // 环境分支的实际名字要带出来，文案不能拿环境标识糊弄
+    assert_eq!(out.branches.get(MODULE).map(String::as_str), Some("dev"));
+}
+
+#[test]
+fn merge_flags_a_rolled_back_env_instead_of_fast_forwarding_old_history() {
+    // 远程 dev 被 force 回退到本地历史里的老提交（behind=0、ahead>0）。
+    // 这时普通推送是**快进**，会把本地副本里回退前的提交（可能含别人已合入的
+    // 内容）一并推回去。必须当成「需 --force 重新对齐」，而不是「本地领先」。
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    commit_file(&f.wt("feature-x"), "feat.txt", "1", "feature work");
+    sync::push(&f.hub, &ws, &ModuleFilter::all()).unwrap();
+    // 先合入并推送到远程 dev
+    sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), true, false).unwrap();
+
+    // 管理员把远程 dev 回退到 main（丢掉刚才那次合并）
+    git(&f.origin, &["update-ref", "refs/heads/dev", "refs/heads/main"]);
+    let local_before = git(&f.env_wt("dev"), &["rev-parse", "HEAD"]);
+
+    let out = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
+    assert!(out.clean.is_empty(), "回退时不能报合并成功: {out:?}");
+    match out.pending[0].1 {
+        PendingReason::EnvRolledBack { ahead } => assert!(ahead > 0, "{out:?}"),
+        ref other => panic!("应为 EnvRolledBack，实际 {other:?}"),
+    }
+    assert!(out.needs_force(), "必须显式 --force: {out:?}");
+
+    // 即使带 --push 也不该真的推：推上去等于把回退前的历史恢复
+    let out = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), true, false).unwrap();
+    assert!(!out.did_push, "回退状态不应执行普通推送: {out:?}");
+    assert_eq!(
+        git(&f.origin, &["rev-parse", "dev"]),
+        git(&f.origin, &["rev-parse", "main"]),
+        "远程 dev 应保持回退后的位置"
+    );
+    assert_eq!(git(&f.env_wt("dev"), &["rev-parse", "HEAD"]), local_before);
+}
+
+#[test]
+fn merge_flags_requirement_commits_that_were_not_pushed() {
+    // 需求分支本地有未推送提交时，合入的是 origin/<需求分支>：合并发生了，
+    // 但内容不全。必须单独报出来，并提示先 push 再 merge。
+    let f = Fixture::new();
+    let ws = f.create("feature-x");
+    commit_file(&f.wt("feature-x"), "feat.txt", "1", "feature work");
+    sync::push(&f.hub, &ws, &ModuleFilter::all()).unwrap();
+    // 推完再补一个本地提交，不推
+    commit_file(&f.wt("feature-x"), "local.txt", "还留在本地", "local only");
+
+    let out = sync::merge(&f.hub, &ws, "dev", &ModuleFilter::all(), false, false).unwrap();
+
+    assert_eq!(out.clean, vec![MODULE], "已推送部分应正常合入: {out:?}");
+    let reason = out
+        .pending
+        .iter()
+        .find(|(m, _)| m == MODULE)
+        .map(|(_, r)| r)
+        .unwrap_or_else(|| panic!("未推送提交应被报出来: {out:?}"));
+    match reason {
+        PendingReason::RequirementUnpushed { ahead } => assert_eq!(*ahead, 1, "{out:?}"),
+        other => panic!("应为 RequirementUnpushed，实际 {other:?}"),
+    }
+    assert!(!out.needs_force(), "这不是分叉: {out:?}");
+    assert!(
+        !f.env_wt("dev").join("local.txt").exists(),
+        "未推送的提交不应被合进去"
     );
 }
 
