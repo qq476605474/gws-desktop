@@ -139,11 +139,14 @@ fn cli_dest() -> Option<PathBuf> {
 
 /// 各 AI CLI 读 skills 的目录。**只写已经存在的**：用户没装某个 CLI 时
 /// 不凭空造一整套目录；手动指定 `GWS_SKILLS_DIR` 时才无条件写那一个。
-const SKILL_TARGETS: [(&str, &str); 4] = [
+const SKILL_TARGETS: [(&str, &str); 7] = [
     ("Claude Code", ".claude/skills"),
     ("OpenCode", ".config/opencode/skills"),
     ("Qoder CLI", ".qoder/skills"),
+    ("Qoder CN CLI", ".qoder-cn/skills"),
     ("Codex", ".codex/skills"),
+    ("DeepSeek Harness", ".dsh/skills"),
+    ("通用 .agents", ".agents/skills"),
 ];
 
 fn skills_targets_in(home: &Path) -> Vec<(String, PathBuf)> {
@@ -334,8 +337,8 @@ fn sync_skills_in(dir: &Path, version: &str, stat: &mut SkillStat) -> Result<(),
 fn sync_skills_all(targets: &[(String, PathBuf)], version: &str) -> (String, bool) {
     if targets.is_empty() {
         return (
-            "没有找到已安装的 AI CLI skills 目录（Claude Code / OpenCode / Qoder CLI / Codex），\
-             跳过；可用 GWS_SKILLS_DIR 指定"
+            "没有找到已安装的 AI CLI skills 目录（Claude Code / OpenCode / Qoder CLI / Qoder CN CLI / Codex / \
+             DeepSeek Harness / 通用 .agents），跳过；可用 GWS_SKILLS_DIR 指定"
                 .to_string(),
             false,
         );
@@ -548,10 +551,22 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         std::fs::create_dir_all(tmp.path().join(".claude/skills")).unwrap();
         std::fs::create_dir_all(tmp.path().join(".qoder/skills")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".qoder-cn/skills")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".dsh/skills")).unwrap();
+        std::fs::create_dir_all(tmp.path().join(".agents/skills")).unwrap();
 
         let targets = skills_targets_in(tmp.path());
         let labels: Vec<&str> = targets.iter().map(|(l, _)| l.as_str()).collect();
-        assert_eq!(labels, vec!["Claude Code", "Qoder CLI"]);
+        assert_eq!(
+            labels,
+            vec![
+                "Claude Code",
+                "Qoder CLI",
+                "Qoder CN CLI",
+                "DeepSeek Harness",
+                "通用 .agents"
+            ]
+        );
 
         // 没装的 CLI 不凭空造目录（实测要求：没有就不新建）
         assert!(!tmp.path().join(".codex/skills").exists());
@@ -563,16 +578,25 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let claude = tmp.path().join(".claude/skills");
         let qoder = tmp.path().join(".qoder/skills");
+        let qoder_cn = tmp.path().join(".qoder-cn/skills");
+        let dsh = tmp.path().join(".dsh/skills");
+        let agents = tmp.path().join(".agents/skills");
         std::fs::create_dir_all(&claude).unwrap();
         std::fs::create_dir_all(&qoder).unwrap();
+        std::fs::create_dir_all(&qoder_cn).unwrap();
+        std::fs::create_dir_all(&dsh).unwrap();
+        std::fs::create_dir_all(&agents).unwrap();
 
         let targets = skills_targets_in(tmp.path());
         let (msg, changed) = sync_skills_all(&targets, "1.0.5");
         assert!(changed, "{msg}");
         assert!(msg.contains("Claude Code"), "{msg}");
         assert!(msg.contains("Qoder CLI"), "{msg}");
+        assert!(msg.contains("Qoder CN CLI"), "{msg}");
+        assert!(msg.contains("DeepSeek Harness"), "{msg}");
+        assert!(msg.contains("通用 .agents"), "{msg}");
 
-        for dir in [&claude, &qoder] {
+        for dir in [&claude, &qoder, &qoder_cn, &dsh, &agents] {
             for (name, text) in BUNDLED_SKILLS {
                 assert_eq!(
                     std::fs::read_to_string(dir.join(name).join("SKILL.md")).unwrap(),

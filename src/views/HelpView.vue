@@ -577,7 +577,8 @@ function go(id: string) {
           </li>
           <li>
             安装 / 升级桌面端时会一并覆盖本机的 CLI 与三个 AI skill；skill 会写进本机已安装的
-            AI CLI 目录（Claude Code / OpenCode / Qoder CLI / Codex），没有的目录不新建。
+            AI CLI 目录（Claude Code / OpenCode / Qoder CLI / Qoder CN CLI / Codex /
+            DeepSeek Harness / 通用 .agents），没有的目录不新建。
             改过的 skill 先备份成 <code>SKILL.md.gws-backup</code>，本机版本更新时不会降级。
           </li>
           <li>更新完成后按提示重启应用。</li>
@@ -594,10 +595,20 @@ function go(id: string) {
             常用：<code>gws ls</code>（需求列表）、<code>gws st</code>（模块状态）、
             <code>gws new</code> / <code>gws get</code>（新建 / 导入需求）、
             <code>gws add</code> / <code>gws drop</code>（增删模块）、
-            <code>gws pull</code> / <code>gws push</code>、
-            <code>gws merge</code>、<code>gws sync-main</code>、
-            <code>gws mr</code>（预览；<code>--create</code> 才创建）、
+            <code>gws rm</code>（删除需求工作区，连本地分支一起清）、
+            <code>gws pull</code> / <code>gws commit</code> / <code>gws push</code>
+            （拉取 / 提交 / 推送；<code>commit --push</code> 提交后顺带推送）、
+            <code>gws merge</code>、<code>gws sync-main</code>（基线合进需求）、
+            <code>gws sync</code>（所有仓库主干与环境 reset 到远程）、
+            <code>gws mr</code>（预览；<code>--create</code> 才创建，<code>--links</code> 只输出对比链接）、
             <code>gws done</code>、<code>gws doc</code>。
+          </li>
+          <li>
+            管理类：<code>gws init</code>（建 hub）、<code>gws repo add|ls|rm</code>（仓库）、
+            <code>gws env add|ls|rm</code>（环境）、
+            <code>gws gitlab login|status|logout</code>（凭据）、
+            <code>gws clean</code>（列出 ws/ 下没有元数据的残留目录，加 <code>--apply</code> 才删除）、
+            <code>gws version</code>。
           </li>
           <li>
             <code>gws new</code> 与界面默认一致：不写 <code>--modules</code> 时<strong>只挂文档库</strong>、

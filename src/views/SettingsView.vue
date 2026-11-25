@@ -690,7 +690,9 @@ async function clearToken() {
         一个都没有就装到 <code>~/.local/bin</code>）。skills 会写进本机<strong>已安装</strong>的
         AI CLI 各自的目录：Claude Code <code>~/.claude/skills</code>、OpenCode
         <code>~/.config/opencode/skills</code>、Qoder CLI <code>~/.qoder/skills</code>、
-        Codex <code>~/.codex/skills</code>；没有的目录不新建，也可用
+        Qoder CN CLI <code>~/.qoder-cn/skills</code>、Codex <code>~/.codex/skills</code>、
+        DeepSeek Harness <code>~/.dsh/skills</code>、通用 <code>~/.agents/skills</code>；
+        没有的目录不新建，也可用
         <code>GWS_SKILLS_DIR</code> 指定。被改过的 skill 会先备份成
         <code>SKILL.md.gws-backup</code>；本机版本比桌面端新时不会被降级。
         <code>GWS_NO_SKILLS=1</code> 可跳过 skills。<br />

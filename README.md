@@ -102,8 +102,9 @@ gws new [<分支后缀>|--branch <完整分支名>] [--modules a,b] [--from 基�
 gws get <远程分支>                   # 拉别人的需求
 gws ls | gws st                      # 列出需求 / 各模块状态
 gws pull | gws push                  # 拉/推本需求所有仓库
+gws commit [-m "说明"] [--push]      # 批量提交本需求改动（默认不推）
 gws merge <环境> [--push]            # 合到环境（默认不推）
-gws mr [--create]                    # 提 MR（先预览）
+gws mr [--create] [--links]          # 提 MR（先预览）/ 只输出对比链接
 gws done                             # 检查是否已全部并入主干
 gws doc new <类型> | ls | status | sync [--push]
 ```
@@ -150,8 +151,9 @@ gws identity --clear    # 清除，回到 git 全局配置
 `skills/` 下是给 AI 助手用的技能。装进你所用 AI CLI 的 skills 目录后，
 AI 就知道该怎么在这个 hub 里干活 —— 改代码只改 `ws/`、文档写哪儿、提 MR 怎么提。
 桌面端会同步到本机**已安装**的 CLI：Claude Code `~/.claude/skills`、OpenCode
-`~/.config/opencode/skills`、Qoder CLI `~/.qoder/skills`、Codex `~/.codex/skills`
-（没有的目录不新建）。
+`~/.config/opencode/skills`、Qoder CLI `~/.qoder/skills`、Qoder CN CLI
+`~/.qoder-cn/skills`、Codex `~/.codex/skills`、DeepSeek Harness `~/.dsh/skills`、
+通用 `~/.agents/skills`（没有的目录不新建）。
 
 | 技能 | 用途 |
 |---|---|

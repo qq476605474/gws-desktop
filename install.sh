@@ -152,7 +152,10 @@ else
     "$HOME/.claude/skills" \
     "$HOME/.config/opencode/skills" \
     "$HOME/.qoder/skills" \
-    "$HOME/.codex/skills"; do
+    "$HOME/.qoder-cn/skills" \
+    "$HOME/.codex/skills" \
+    "$HOME/.dsh/skills" \
+    "$HOME/.agents/skills"; do
     [ -d "$d" ] || continue
     if [ -z "$SKILLS_DIRS" ]; then
       SKILLS_DIRS="$d"
